@@ -38,9 +38,9 @@ The launcher creates `data/.env` from the game's example only when missing and w
 
 ## Live game data
 
-GMCP negotiation advertises NewZMud and its supported modules. The character panel accepts `Char.Vitals`, `Char.Status`/`Char.Name`, and `Room.Info`. For 炎黄群侠传 it maps `hp/max_hp` to 气血, `jing/max_jing` to 精气, `jingli/max_jingli` to 精力, `neili/max_neili` to 内力, plus `exp`, room names, areas, and exits. When available, room exits are highlighted and unavailable directions are disabled.
+GMCP negotiation advertises NewZMud and its supported modules. The character panel renders numeric `Char.Vitals` fields as data-driven rows, pairing each field with a matching `max_`/`max` field when provided. Labels come from the server's field names; no game-specific stat aliases are assumed. `Char.Status`/`Char.Name` and `Room.Info` populate optional character and room details. When available, room exits are highlighted and unavailable directions are disabled.
 
-After receiving character or room data, or the game's `Core.Hello`, the client requests `Char.Vitals.Get` every three seconds while connected. Values remain empty until the server supplies them. Name/title only appear if the server sends them. Remote GUI/map download requests are not executed.
+Once GMCP is negotiated, the client requests `Char.Vitals.Get` immediately and then every three seconds while connected. Empty pre-login replies are ignored. Name/title only appear if the server sends them. Remote GUI/map download requests are not executed.
 
 ## Automation for each world
 

@@ -32,7 +32,6 @@ final class MUDSession: ObservableObject {
     private var commands: [(text: String, delay: Double)] = []
     private var lastTriggered: [UUID: Date] = [:]
     private var retryAttempt = 0
-    private var characterReady = false
     private var terminalColumns = 80
     private var terminalRows = 30
 
@@ -118,7 +117,7 @@ final class MUDSession: ObservableObject {
         connection?.stateUpdateHandler = nil
         connection?.cancel(); connection = nil
         isConnected = false; isConnecting = false; isPasswordInput = false
-        gmcpAvailable = false; characterReady = false
+        gmcpAvailable = false
         stream = TelnetStream()
         _ = stream.resize(columns: terminalColumns, rows: terminalRows)
     }
@@ -284,6 +283,7 @@ final class MUDSession: ObservableObject {
                         if enabled {
                             self.write(TelnetStream.gmcp(#"Core.Hello {"client":"NewZMud","version":"0.2"}"#))
                             self.write(TelnetStream.gmcp(#"Core.Supports.Set ["Char 1","Char.Vitals 1","Room 1"]"#))
+                            self.startVitalsPolling()
                         }
                     }
                     for message in output.messages { self.receiveGMCP(message) }
@@ -299,18 +299,19 @@ final class MUDSession: ObservableObject {
 
     private func receiveGMCP(_ message: GMCPMessage) {
         character.receive(message)
-        if message.module == "Room.Info" || message.module == "Char.Vitals" ||
-            (message.module == "Core.Hello" && message.object?["mud_name"] != nil) {
-            characterReady = true
-            if vitalsTask == nil {
-                vitalsTask = Task { [weak self] in
-                    while let self, !Task.isCancelled, self.isConnected {
-                        if self.gmcpAvailable && self.characterReady && !self.isPasswordInput {
-                            self.write(TelnetStream.gmcp("Char.Vitals.Get"))
-                        }
-                        do { try await Task.sleep(nanoseconds: 3_000_000_000) } catch { return }
-                    }
+        if message.module == "Room.Info" || message.module == "Char.Vitals" {
+            startVitalsPolling()
+        }
+    }
+
+    private func startVitalsPolling() {
+        guard vitalsTask == nil else { return }
+        vitalsTask = Task { [weak self] in
+            while let self, !Task.isCancelled, self.isConnected {
+                if self.gmcpAvailable && !self.isPasswordInput {
+                    self.write(TelnetStream.gmcp("Char.Vitals.Get"))
                 }
+                do { try await Task.sleep(nanoseconds: 3_000_000_000) } catch { return }
             }
         }
     }

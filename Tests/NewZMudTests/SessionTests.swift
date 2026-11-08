@@ -94,8 +94,8 @@ final class SessionTests: XCTestCase {
         session.connect(host: "127.0.0.1", port: server.port)
         try await wait { session.character.room == "扬州" && server.occurrences("Char.Vitals.Get") > 0 }
         XCTAssertTrue(session.gmcpAvailable)
-        XCTAssertEqual(session.character.health.current, 820)
-        XCTAssertEqual(session.character.innerPower.maximum, 500)
+        XCTAssertEqual(session.character.vitals.first { $0.id == "hp" }?.current, 820)
+        XCTAssertEqual(session.character.vitals.first { $0.id == "neili" }?.maximum, 500)
         XCTAssertGreaterThan(server.occurrences("Core.Hello"), 0)
         XCTAssertGreaterThan(server.occurrences("Core.Supports.Set"), 0)
     }

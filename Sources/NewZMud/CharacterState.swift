@@ -17,7 +17,9 @@ struct GMCPMessage {
     }
 }
 
-struct CharacterMeter {
+struct CharacterVital: Identifiable, Equatable {
+    var id: String
+    var name: String
     var current: Int?
     var maximum: Int?
     var fraction: Double {
@@ -33,10 +35,7 @@ struct CharacterMeter {
 struct CharacterState {
     var name: String?
     var title: String?
-    var health = CharacterMeter()
-    var essence = CharacterMeter()
-    var stamina = CharacterMeter()
-    var innerPower = CharacterMeter()
+    var vitals: [CharacterVital] = []
     var experience: Int?
     var room: String?
     var area: String?
@@ -46,7 +45,7 @@ struct CharacterState {
 
     mutating func receive(_ message: GMCPMessage) {
         guard let data = message.object else { return }
-        func number(_ keys: String...) -> Int? {
+        func number(_ keys: [String]) -> Int? {
             for key in keys {
                 if let value = data[key] as? NSNumber { return value.intValue }
                 if let value = data[key] as? String, let number = Int(value) { return number }
@@ -55,19 +54,14 @@ struct CharacterState {
         }
         switch message.module.lowercased() {
         case "char.vitals":
-            health.current = number("hp", "qi") ?? health.current
-            health.maximum = number("max_hp", "maxhp", "max_qi") ?? health.maximum
-            essence.current = number("jing", "sp") ?? essence.current
-            essence.maximum = number("max_jing", "max_sp") ?? essence.maximum
-            stamina.current = number("jingli", "stamina") ?? stamina.current
-            stamina.maximum = number("max_jingli", "max_stamina") ?? stamina.maximum
-            innerPower.current = number("neili", "mana", "mp") ?? innerPower.current
-            innerPower.maximum = number("max_neili", "maxmana", "max_mana", "max_mp") ?? innerPower.maximum
-            experience = number("exp", "experience", "combat_exp") ?? experience
+            let decoded = Self.decodeVitals(data, number: number)
+            guard decoded.contains(where: { ($0.current ?? 0) > 0 || ($0.maximum ?? 0) > 0 }) else { return }
+            vitals = decoded
+            experience = number(["exp", "experience", "combat_exp"]) ?? experience
         case "char.status", "char.name":
             name = data["name"] as? String ?? name
             title = data["title"] as? String ?? data["class"] as? String ?? title
-            experience = number("exp", "experience") ?? experience
+            experience = number(["exp", "experience"]) ?? experience
         case "room.info":
             room = data["name"] as? String ?? room
             area = data["area"] as? String ?? area
@@ -76,5 +70,20 @@ struct CharacterState {
         default: return
         }
         updated = Date()
+    }
+
+    private static func decodeVitals(_ data: [String: Any], number: ([String]) -> Int?) -> [CharacterVital] {
+        let metadata = Set(["exp", "experience", "combat_exp", "pot", "potential", "learned_points"])
+        let normalizedKeys = Dictionary(data.keys.map { ($0.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [CharacterVital] = []
+        for key in data.keys.sorted() where !metadata.contains(key.lowercased()) && !key.lowercased().hasPrefix("max") {
+            guard let current = number([key]) else { continue }
+            let normalizedKey = key.lowercased()
+            let maximumKey = normalizedKeys["max\(normalizedKey)"] ?? normalizedKeys["max_\(normalizedKey)"]
+            let maximum = maximumKey.flatMap { number([$0]) }
+            let label = key.replacingOccurrences(of: "_", with: " ").capitalized
+            result.append(CharacterVital(id: key, name: label, current: current, maximum: maximum))
+        }
+        return result
     }
 }

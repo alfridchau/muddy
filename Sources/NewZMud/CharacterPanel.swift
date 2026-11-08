@@ -8,6 +8,26 @@ struct CharacterPanel: View {
     var isConnected: Bool
     var send: (String) -> Void
 
+    private var displayedVitals: [CharacterVital] {
+        if isDemo {
+            return [
+                CharacterVital(id: "hp", name: "Health", current: 820, maximum: 1_000),
+                CharacterVital(id: "mp", name: "Mana", current: 240, maximum: 300),
+                CharacterVital(id: "moves", name: "Movement", current: 180, maximum: 300),
+                CharacterVital(id: "energy", name: "Energy", current: 360, maximum: 500)
+            ]
+        }
+        return character.vitals
+    }
+
+    private let vitalColors: [Color] = [
+        Palette.jade,
+        Palette.gold,
+        Color(red: 0.76, green: 0.61, blue: 0.84),
+        Color(red: 0.52, green: 0.66, blue: 0.85),
+        Color(red: 0.82, green: 0.60, blue: 0.46)
+    ]
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
@@ -22,7 +42,7 @@ struct CharacterPanel: View {
                 HStack(spacing: 12) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 12).fill(Palette.gold.opacity(0.08)).frame(width: 44, height: 48)
-                        Text(isDemo ? "侠" : "旅").font(.system(size: 25, weight: .light, design: .serif))
+                        Image(systemName: "person.fill").font(.system(size: 20, weight: .light))
                             .foregroundStyle(Palette.gold)
                     }
                     VStack(alignment: .leading, spacing: 5) {
@@ -32,16 +52,17 @@ struct CharacterPanel: View {
                     }
                 }
                 VStack(spacing: 18) {
-                    stat("气血", label: "Health", value: isDemo ? "820 / 1,000" : character.health.text, fraction: isDemo ? 0.82 : character.health.fraction, color: Palette.jade)
-                    stat("精气", label: "Essence", value: isDemo ? "240 / 300" : character.essence.text, fraction: isDemo ? 0.8 : character.essence.fraction, color: Palette.gold)
-                    stat("精力", label: "Stamina", value: isDemo ? "180 / 300" : character.stamina.text, fraction: isDemo ? 0.6 : character.stamina.fraction, color: Color(red: 0.76, green: 0.61, blue: 0.84))
-                    stat("内力", label: "Inner power", value: isDemo ? "360 / 500" : character.innerPower.text, fraction: isDemo ? 0.72 : character.innerPower.fraction, color: Color(red: 0.52, green: 0.66, blue: 0.85))
+                    ForEach(Array(displayedVitals.enumerated()), id: \.offset) { index, vital in
+                        stat(vital, color: vitalColors[index % vitalColors.count])
+                    }
                 }
-                HStack {
-                    Text("Experience").foregroundStyle(Palette.muted)
-                    Spacer()
-                    Text(isDemo ? "12,450" : (character.experience?.formatted() ?? "—")).monospacedDigit()
-                }.font(.system(size: 11))
+                if isDemo || character.experience != nil {
+                    HStack {
+                        Text("Experience").foregroundStyle(Palette.muted)
+                        Spacer()
+                        Text(isDemo ? "12,450" : (character.experience?.formatted() ?? "—")).monospacedDigit()
+                    }.font(.system(size: 11))
+                }
                 Rectangle().fill(Palette.border).frame(height: 1)
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
@@ -107,18 +128,17 @@ struct CharacterPanel: View {
         .background(Palette.panel.opacity(0.6))
     }
 
-    private func stat(_ title: String, label: String, value: String, fraction: Double, color: Color) -> some View {
+    private func stat(_ vital: CharacterVital, color: Color) -> some View {
         VStack(spacing: 8) {
             HStack(spacing: 6) {
-                Text(title).font(.system(size: 11, weight: .medium))
-                Text(label).font(.system(size: 9)).foregroundStyle(Palette.muted)
+                Text(vital.name).font(.system(size: 11, weight: .medium))
                 Spacer(minLength: 0)
-                Text(value).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.muted)
+                Text(vital.text).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.muted)
             }
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Palette.raised)
-                    Capsule().fill(color.opacity(0.8)).frame(width: geometry.size.width * fraction)
+                    Capsule().fill(color.opacity(0.8)).frame(width: geometry.size.width * vital.fraction)
                 }
             }.frame(height: 4)
         }
