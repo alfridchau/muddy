@@ -77,13 +77,6 @@ final class MapperStore: ObservableObject {
         persist()
     }
 
-    func clear() {
-        map = WorldMap()
-        previousRoomID = nil
-        pendingDirection = nil
-        persist()
-    }
-
     private func newPosition(from previous: String?, direction: String?) -> (x: Int, y: Int) {
         guard let previous, let room = map.rooms.first(where: { $0.id == previous }) else { return (0, 0) }
         let delta: (Int, Int)
@@ -143,8 +136,10 @@ struct MapperView: View {
     @ObservedObject var store: MapperStore
     @Environment(\.dismiss) private var dismiss
 
-    private let cellWidth: CGFloat = 150
-    private let cellHeight: CGFloat = 104
+    private let cellWidth: CGFloat = 230
+    private let cellHeight: CGFloat = 150
+    private let roomCardWidth: CGFloat = 206
+    private let roomCardHeight: CGFloat = 84
 
     private var bounds: (minX: Int, maxX: Int, minY: Int, maxY: Int) {
         guard !store.map.rooms.isEmpty else { return (0, 0, 0, 0) }
@@ -161,10 +156,6 @@ struct MapperView: View {
                         .font(.system(size: 11)).foregroundStyle(Palette.muted)
                 }
                 Spacer()
-                if store.map.roomCount > 0 {
-                    Button("Clear map…", systemImage: "trash") { store.clear() }
-                        .buttonStyle(.borderless).foregroundStyle(Palette.muted)
-                }
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
             .padding(18)
@@ -199,14 +190,21 @@ struct MapperView: View {
                 for link in store.map.connections {
                     guard let from = store.map.rooms.first(where: { $0.id == link.from }),
                           let to = store.map.rooms.first(where: { $0.id == link.to }) else { continue }
-                    let start = point(for: from)
-                    let end = point(for: to)
+                    let fromCenter = point(for: from)
+                    let toCenter = point(for: to)
+                    let dx = toCenter.x - fromCenter.x
+                    let dy = toCenter.y - fromCenter.y
+                    let length = max(1, hypot(dx, dy))
+                    let ux = dx / length
+                    let uy = dy / length
+                    let startInset = min((roomCardWidth / 2) / max(abs(ux), 0.001), (roomCardHeight / 2) / max(abs(uy), 0.001))
+                    let endInset = min((roomCardWidth / 2) / max(abs(ux), 0.001), (roomCardHeight / 2) / max(abs(uy), 0.001))
+                    let start = CGPoint(x: fromCenter.x + ux * startInset, y: fromCenter.y + uy * startInset)
+                    let end = CGPoint(x: toCenter.x - ux * endInset, y: toCenter.y - uy * endInset)
                     var path = Path()
                     path.move(to: start)
                     path.addLine(to: end)
                     context.stroke(path, with: .color(Palette.jade.opacity(0.45)), lineWidth: 2)
-                    let midpoint = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
-                    context.draw(Text(link.direction.uppercased()).font(.system(size: 8, weight: .medium, design: .monospaced)).foregroundColor(Palette.muted), at: midpoint)
                 }
             }
             ForEach(store.map.rooms) { room in
@@ -235,7 +233,7 @@ struct MapperView: View {
             Text(room.exits.isEmpty ? "Exits unknown" : "Exits: \(room.exits.sorted().joined(separator: ", "))")
                 .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).lineLimit(2)
         }
-        .padding(9).frame(width: cellWidth - 18, height: 72, alignment: .leading)
+        .padding(9).frame(width: roomCardWidth, height: roomCardHeight, alignment: .leading)
         .background(current ? Palette.jade.opacity(0.13) : Palette.raised,
                     in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(current ? Palette.jade.opacity(0.65) : Palette.border, lineWidth: 1))
