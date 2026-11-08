@@ -30,7 +30,7 @@ struct WorldEditor: View {
                     field("Port", placeholder: "4000", text: $world.port).frame(width: 90)
                 }
             }
-            Text("Use the current host and port provided by your MUD. For the local game, enter 127.0.0.1 and port 6666. This client currently uses UTF-8.")
+            Text("Use the current host and port provided by your MUD. For the local game, enter 127.0.0.1 and port 6666. Text encoding can be changed per world in Automation settings.")
                 .font(.caption).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Spacer()

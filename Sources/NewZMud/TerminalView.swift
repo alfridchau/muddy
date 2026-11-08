@@ -4,6 +4,7 @@ import SwiftUI
 struct TerminalView: NSViewRepresentable {
     var buffer: TerminalBuffer
     var fontSize: Double
+    var theme: TerminalTheme
     var search: String
     @Binding var following: Bool
     @Binding var newOutput: Int
@@ -38,6 +39,7 @@ struct TerminalView: NSViewRepresentable {
         let canvas = coordinator.canvas
         let contentChanged = canvas?.buffer.revision != buffer.revision
         let fontChanged = canvas?.fontSize != fontSize
+        let themeChanged = canvas?.theme != theme
         let filterChanged = canvas?.filter != search
         let initialRefresh = !(canvas?.hasRefreshed ?? false)
         let resumedFollowing = !coordinator.lastFollowing && following
@@ -45,11 +47,12 @@ struct TerminalView: NSViewRepresentable {
         coordinator.lastFollowing = following
         if contentChanged { canvas?.buffer = buffer }
         if fontChanged { canvas?.fontSize = fontSize }
+        if themeChanged { canvas?.theme = theme }
         if filterChanged { canvas?.filter = search }
         if contentChanged || filterChanged || initialRefresh {
             canvas?.refreshRows(updateAccessibility: contentChanged || initialRefresh)
         }
-        if contentChanged || fontChanged || filterChanged || initialRefresh {
+        if contentChanged || fontChanged || themeChanged || filterChanged || initialRefresh {
             coordinator.layout()
         } else if resumedFollowing {
             coordinator.scrollToBottom()
@@ -131,6 +134,7 @@ struct TerminalView: NSViewRepresentable {
 final class TerminalCanvas: NSView {
     var buffer = TerminalBuffer()
     var fontSize: Double = 14
+    var theme: TerminalTheme = .midnight { didSet { needsDisplay = true } }
     var filter = ""
     var visibleRows: [Int] = []
     var longestVisibleRow = 0
@@ -143,6 +147,20 @@ final class TerminalCanvas: NSView {
     var font: NSFont { NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
     var cellWidth: CGFloat { ("M" as NSString).size(withAttributes: [.font: font]).width }
     var lineHeight: CGFloat { ceil(fontSize * 1.65) }
+    private var themeBackground: NSColor {
+        switch theme {
+        case .midnight: NSColor(Palette.canvas)
+        case .paper: NSColor(calibratedWhite: 0.94, alpha: 1)
+        case .amber: NSColor(srgbRed: 0.10, green: 0.07, blue: 0.035, alpha: 1)
+        }
+    }
+    private var themeForeground: NSColor {
+        switch theme {
+        case .midnight: NSColor(Palette.ink)
+        case .paper: NSColor(calibratedWhite: 0.12, alpha: 1)
+        case .amber: NSColor(srgbRed: 0.94, green: 0.72, blue: 0.36, alpha: 1)
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -162,7 +180,7 @@ final class TerminalCanvas: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(Palette.canvas).setFill()
+        themeBackground.setFill()
         dirtyRect.fill()
         guard !visibleRows.isEmpty else { return }
         let first = max(0, Int((dirtyRect.minY - 16) / lineHeight))
@@ -196,8 +214,8 @@ final class TerminalCanvas: NSView {
         let rect = NSRect(x: padding + CGFloat(start) * cellWidth,
                           y: 16 + CGFloat(displayedRow) * lineHeight,
                           width: CGFloat(end - start) * cellWidth, height: lineHeight)
-        var foreground = Self.color(style.foreground, fallback: NSColor(Palette.ink), bright: style.bold)
-        var background = Self.color(style.background, fallback: NSColor(Palette.canvas))
+        var foreground = Self.color(style.foreground, fallback: themeForeground, bright: style.bold)
+        var background = Self.color(style.background, fallback: themeBackground)
         if style.inverse { swap(&foreground, &background) }
         NSGraphicsContext.current?.cgContext.setShouldAntialias(false)
         background.setFill(); rect.fill()

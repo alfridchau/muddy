@@ -44,7 +44,7 @@ Once GMCP is negotiated, the client requests `Char.Vitals.Get` immediately and t
 
 ## Automation for each world
 
-Open **Automation → Rules and shortcuts…**. Settings are saved separately for the selected world. The Actions section configures the character panel's command buttons, and Stats maps server field names to display labels and can hide empty `0 / 0` rows. Enter multiple commands on separate lines or separate them with semicolons.
+Open **Automation → Rules and shortcuts…**. Settings are saved separately for the selected world. Actions configures the character panel's command buttons; Stats maps, orders, and hides server fields; Exits maps reported exits to commands; Login classifies prompt lines without auto-answering them; Display controls text size, encoding, and terminal colors. Enter multiple commands on separate lines or separate them with semicolons.
 
 | Feature | Example |
 | --- | --- |

@@ -10,6 +10,8 @@ struct CharacterPanel: View {
     var quickActions: [QuickAction]
     var vitalLabels: [VitalLabelRule]
     var hideEmptyVitals: Bool
+    var vitalOrder: [String]
+    var hiddenVitals: Set<String>
     var send: (String) -> Void
 
     private var displayedVitals: [CharacterVital] {
@@ -25,13 +27,21 @@ struct CharacterPanel: View {
             vitals = character.vitals
         }
         let labels = Dictionary(vitalLabels.map { ($0.field.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), $0.label) }, uniquingKeysWith: { _, latest in latest })
-        return vitals
-            .filter { !(hideEmptyVitals && $0.current == 0 && $0.maximum == 0) }
-            .map { vital in
-                var vital = vital
-                if !isDemo, let label = labels[vital.id.lowercased()], !label.isEmpty { vital.name = label }
-                return vital
+        let order = Dictionary(vitalOrder.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        return vitals.enumerated()
+            .filter { !(hideEmptyVitals && $0.element.current == 0 && $0.element.maximum == 0) }
+            .filter { !hiddenVitals.contains($0.element.id) }
+            .map { indexedVital in
+                var labeledVital = indexedVital.element
+                if !isDemo, let label = labels[labeledVital.id.lowercased()], !label.isEmpty { labeledVital.name = label }
+                return (indexedVital.offset, labeledVital)
             }
+            .sorted { lhs, rhs in
+                let left = order[lhs.1.id] ?? Int.max
+                let right = order[rhs.1.id] ?? Int.max
+                return left == right ? lhs.0 < rhs.0 : left < right
+            }
+            .map(\.1)
     }
 
     private let vitalColors: [Color] = [
@@ -144,11 +154,18 @@ struct NavigationOverlay: View {
     var isDemo: Bool
     var canSend: Bool
     var character: CharacterState
+    var exitCommands: [ExitCommandRule]
     var send: (String) -> Void
 
     private var exitsSummary: String {
         let exits = character.exits.sorted().joined(separator: ", ")
         return exits.isEmpty ? "none reported" : exits
+    }
+
+    private var displayedExits: [(name: String, command: String)] {
+        let mappings = Dictionary(exitCommands.map { ($0.exit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), $0.command) }, uniquingKeysWith: { _, latest in latest })
+        let names = isDemo ? ["nw", "north", "ne", "west", "east", "sw", "south", "se"] : character.exits.sorted()
+        return names.map { name in (name, mappings[name.lowercased()] ?? name) }
     }
 
     var body: some View {
@@ -194,30 +211,18 @@ struct NavigationOverlay: View {
                         }
                     }
                 }
-                VStack(spacing: 4) {
-                    HStack(spacing: 4) {
-                        direction("NW", command: "nw")
-                        direction("N", command: "north")
-                        direction("NE", command: "ne")
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4) {
+                    ForEach(Array(displayedExits.enumerated()), id: \.offset) { _, exit in
+                        exitButton(exit.name, command: exit.command)
                     }
-                    HStack(spacing: 4) {
-                        direction("W", command: "west")
-                        Button { send("look") } label: {
-                            Image(systemName: "location.circle")
-                                .font(.system(size: 15, weight: .light)).foregroundStyle(Palette.jade)
-                                .frame(width: 36, height: 30)
-                                .background(Palette.jade.opacity(0.08))
-                                .clipShape(RoundedRectangle(cornerRadius: 5))
-                        }
-                        .buttonStyle(.plain).disabled(!canSend).help("Look around")
-                        direction("E", command: "east")
-                    }
-                    HStack(spacing: 4) {
-                        direction("SW", command: "sw")
-                        direction("S", command: "south")
-                        direction("SE", command: "se")
-                    }
-                }.frame(maxWidth: .infinity)
+                }
+                Button { send("look") } label: {
+                    Label("Look", systemImage: "location.circle")
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.jade)
+                        .frame(maxWidth: .infinity).padding(.vertical, 7)
+                        .background(Palette.jade.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain).disabled(!canSend).help("Look around")
             }
         }
         .padding(12)
@@ -227,15 +232,15 @@ struct NavigationOverlay: View {
         .shadow(color: .black.opacity(0.22), radius: 12, y: 5)
     }
 
-    private func direction(_ label: String, command: String) -> some View {
-        let available = isDemo || !character.hasRoom || character.exits.contains(command) || character.exits.contains(label.lowercased())
-        return Button { send(command) } label: {
-            Text(label).font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(available && !isDemo && character.hasRoom ? Palette.jade : Palette.muted)
-                .frame(width: 36, height: 30)
+    private func exitButton(_ exit: String, command: String) -> some View {
+        Button { send(command) } label: {
+            Text(exit.uppercased()).font(.system(size: 9, weight: .medium, design: .monospaced))
+                .lineLimit(1).minimumScaleFactor(0.65)
+                .foregroundStyle(Palette.jade)
+                .frame(maxWidth: .infinity, minHeight: 30)
                 .background(Palette.raised.opacity(0.7))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
         }
-        .buttonStyle(.plain).disabled(!canSend || !available).help("Walk \(command)")
+        .buttonStyle(.plain).disabled(!canSend).help("Exit: \(exit) · command: \(command)")
     }
 }

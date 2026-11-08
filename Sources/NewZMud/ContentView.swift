@@ -13,7 +13,6 @@ struct ContentView: View {
     @State private var search = ""
     @State private var showSearch = false
     @State private var demoLines = DemoWorld.introduction
-    @AppStorage("terminalFontSize") private var fontSize: Double = 14
     @State private var focusRequest = 0
     @State private var showAutomation = false
     @State private var followingOutput = true
@@ -74,6 +73,8 @@ struct ContentView: View {
                                        quickActions: automation.configuration.quickActions,
                                        vitalLabels: automation.configuration.vitalLabels,
                                        hideEmptyVitals: automation.configuration.hideEmptyVitals,
+                                       vitalOrder: automation.configuration.vitalOrder,
+                                       hiddenVitals: automation.configuration.hiddenVitals,
                                        send: submit)
                             .frame(width: 246)
                     }
@@ -92,7 +93,8 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showAutomation) {
-            AutomationEditor(draft: automation.configuration, worldName: world.name) { automation.configuration = $0 }
+            AutomationEditor(draft: automation.configuration, worldName: world.name,
+                             currentVitals: session.character.vitals) { automation.configuration = $0 }
         }
         .background {
             ShortcutMonitor(rules: automation.configuration.keys,
@@ -272,8 +274,8 @@ struct ContentView: View {
             }
             QuietIconButton(symbol: "magnifyingglass", label: "Find in output · ⌘F") { showSearch.toggle() }
             Menu {
-                Button("Increase text size") { fontSize = min(fontSize + 1, 22) }
-                Button("Decrease text size") { fontSize = max(fontSize - 1, 11) }
+                Button("Increase text size") { automation.configuration.terminalFontSize = min(automation.configuration.terminalFontSize + 1, 22) }
+                Button("Decrease text size") { automation.configuration.terminalFontSize = max(automation.configuration.terminalFontSize - 1, 11) }
                 Divider()
                 Button("Clear output") {
                     if world.isDemo { demoLines = [] } else { session.clearOutput() }
@@ -299,7 +301,8 @@ struct ContentView: View {
     }
 
     private var terminal: some View {
-        TerminalView(buffer: displayBuffer, fontSize: fontSize, search: search,
+        TerminalView(buffer: displayBuffer, fontSize: automation.configuration.terminalFontSize,
+                     theme: automation.configuration.terminalTheme, search: search,
                      following: $followingOutput, newOutput: $pendingOutput) { columns, rows in
             terminalColumns = columns; terminalRows = rows
             if !world.isDemo { session.resize(columns: columns, rows: rows) }
@@ -320,7 +323,9 @@ struct ContentView: View {
         .overlay(alignment: .topTrailing) {
             if world.isDemo || (session.isConnected && session.character.hasRoom) {
                 NavigationOverlay(isDemo: world.isDemo, canSend: canPlay,
-                                  character: session.character, send: submit)
+                                  character: session.character,
+                                  exitCommands: automation.configuration.exitCommands,
+                                  send: submit)
                     .padding(16)
             }
         }
@@ -412,9 +417,9 @@ struct ContentView: View {
             Text(connectionStatusText)
             Spacer()
             if session.queuedCommands > 0 { Text("\(session.queuedCommands) queued"); Text("·") }
-            Text(world.isDemo ? "Sample character & room data" : (session.gmcpAvailable ? "GMCP connected" : "Telnet"))
+            Text(world.isDemo ? "Sample character & room data" : (session.gmcpAvailable ? "GMCP" : "Telnet"))
             Text("·").padding(.horizontal, 5)
-            Text(world.isDemo ? "UTF-8 preview" : "UTF-8")
+            Text(world.isDemo ? "UTF-8 preview" : automation.configuration.terminalEncoding.title)
         }
         .font(.system(size: 10)).foregroundStyle(Palette.muted)
         .padding(.horizontal, 22).padding(.vertical, 10)
@@ -427,8 +432,9 @@ struct ContentView: View {
         guard session.isConnected else { return session.status }
         if session.isPasswordInput { return "Login · password required" }
         if session.character.hasCharacterInfo { return "Game data ready" }
+        if let loginStatus = session.loginStatus { return loginStatus }
         if session.gmcpAvailable { return "GMCP connected · waiting for login" }
-        return "Telnet connected · waiting for game data"
+        return "Telnet connected · configure login prompts for sign-in status"
     }
 
     private var statusIndicatorColor: Color {

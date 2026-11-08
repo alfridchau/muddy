@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 struct AliasRule: Identifiable, Codable, Equatable {
     var id = UUID()
@@ -56,6 +57,60 @@ struct VitalLabelRule: Identifiable, Codable, Equatable {
     var field = ""
     var label = ""
 }
+struct ExitCommandRule: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var exit = ""
+    var command = ""
+}
+enum LoginPromptKind: String, Codable, CaseIterable, Identifiable {
+    case username, password, ready
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .username: "Username prompt"
+        case .password: "Password prompt"
+        case .ready: "In game / ready"
+        }
+    }
+}
+struct LoginPromptRule: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var kind: LoginPromptKind = .username
+    var pattern = ""
+}
+enum MUDTextEncoding: String, Codable, CaseIterable, Identifiable {
+    case utf8, gbk, shiftJIS, windows1252
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .utf8: "UTF-8"
+        case .gbk: "GBK / GB18030"
+        case .shiftJIS: "Shift JIS"
+        case .windows1252: "Windows-1252"
+        }
+    }
+    var foundationEncoding: String.Encoding {
+        switch self {
+        case .utf8: return String.Encoding.utf8
+        case .gbk:
+            let value = CFStringConvertIANACharSetNameToEncoding("GB18030" as CFString)
+            return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(value))
+        case .shiftJIS: return String.Encoding.shiftJIS
+        case .windows1252: return String.Encoding.windowsCP1252
+        }
+    }
+}
+enum TerminalTheme: String, Codable, CaseIterable, Identifiable {
+    case midnight, paper, amber
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .midnight: "Midnight"
+        case .paper: "Paper"
+        case .amber: "Amber"
+        }
+    }
+}
 struct WorldConfiguration: Codable, Equatable {
     var aliases: [AliasRule] = []
     var triggers: [TriggerRule] = []
@@ -64,11 +119,19 @@ struct WorldConfiguration: Codable, Equatable {
     var quickActions = QuickAction.defaults
     var vitalLabels: [VitalLabelRule] = []
     var hideEmptyVitals = true
+    var vitalOrder: [String] = []
+    var hiddenVitals: Set<String> = []
+    var exitCommands: [ExitCommandRule] = []
+    var loginPrompts: [LoginPromptRule] = []
+    var terminalFontSize = 14.0
+    var terminalEncoding: MUDTextEncoding = .utf8
+    var terminalTheme: TerminalTheme = .midnight
     var walkDelay: Double = 0.4
     var autoReconnect = false
 
     private enum CodingKeys: String, CodingKey {
-        case aliases, triggers, timers, keys, quickActions, vitalLabels, hideEmptyVitals, walkDelay, autoReconnect
+        case aliases, triggers, timers, keys, quickActions, vitalLabels, hideEmptyVitals, vitalOrder, hiddenVitals
+        case exitCommands, loginPrompts, terminalFontSize, terminalEncoding, terminalTheme, walkDelay, autoReconnect
     }
 
     init() {}
@@ -82,6 +145,13 @@ struct WorldConfiguration: Codable, Equatable {
         quickActions = try values.decodeIfPresent([QuickAction].self, forKey: .quickActions) ?? QuickAction.defaults
         vitalLabels = try values.decodeIfPresent([VitalLabelRule].self, forKey: .vitalLabels) ?? []
         hideEmptyVitals = try values.decodeIfPresent(Bool.self, forKey: .hideEmptyVitals) ?? true
+        vitalOrder = try values.decodeIfPresent([String].self, forKey: .vitalOrder) ?? []
+        hiddenVitals = try values.decodeIfPresent(Set<String>.self, forKey: .hiddenVitals) ?? []
+        exitCommands = try values.decodeIfPresent([ExitCommandRule].self, forKey: .exitCommands) ?? []
+        loginPrompts = try values.decodeIfPresent([LoginPromptRule].self, forKey: .loginPrompts) ?? []
+        terminalFontSize = try values.decodeIfPresent(Double.self, forKey: .terminalFontSize) ?? 14
+        terminalEncoding = try values.decodeIfPresent(MUDTextEncoding.self, forKey: .terminalEncoding) ?? .utf8
+        terminalTheme = try values.decodeIfPresent(TerminalTheme.self, forKey: .terminalTheme) ?? .midnight
         walkDelay = try values.decodeIfPresent(Double.self, forKey: .walkDelay) ?? 0.4
         autoReconnect = try values.decodeIfPresent(Bool.self, forKey: .autoReconnect) ?? false
     }

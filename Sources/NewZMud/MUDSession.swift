@@ -9,6 +9,7 @@ final class MUDSession: ObservableObject {
     @Published private(set) var isConnecting = false
     @Published private(set) var isPasswordInput = false
     @Published private(set) var gmcpAvailable = false
+    @Published private(set) var loginStatus: String?
     @Published private(set) var automationEnabled = false
     @Published private(set) var queuedCommands = 0
     @Published private(set) var reconnectIn: Int?
@@ -27,6 +28,7 @@ final class MUDSession: ObservableObject {
     private var retryTask: Task<Void, Never>?
     private var vitalsTask: Task<Void, Never>?
     private var roomInfoRequested = false
+    private var lastLoginPromptLine: String?
     private var commandTask: Task<Void, Never>?
     private var commandGeneration = UUID()
     private var timerTasks: [UUID: Task<Void, Never>] = [:]
@@ -38,6 +40,7 @@ final class MUDSession: ObservableObject {
 
     func configure(_ configuration: WorldConfiguration) {
         self.configuration = configuration
+        stream.setTextEncoding(configuration.terminalEncoding.foundationEncoding)
         if !configuration.autoReconnect, reconnectIn != nil {
             retryTask?.cancel(); retryTask = nil; reconnectIn = nil
             status = "Disconnected. Click Connect to retry."
@@ -119,8 +122,10 @@ final class MUDSession: ObservableObject {
         connection?.cancel(); connection = nil
         isConnected = false; isConnecting = false; isPasswordInput = false
         gmcpAvailable = false
+        loginStatus = nil
+        lastLoginPromptLine = nil
         roomInfoRequested = false
-        stream = TelnetStream()
+        stream = TelnetStream(encoding: configuration.terminalEncoding.foundationEncoding)
         _ = stream.resize(columns: terminalColumns, rows: terminalRows)
     }
 
@@ -162,7 +167,7 @@ final class MUDSession: ObservableObject {
     /// Password replies bypass aliases, queues, echo, and history handling.
     func send(_ command: String) {
         guard isConnected else { return }
-        if isPasswordInput { sendRaw(command); return }
+        if isPasswordInput { lastLoginPromptLine = nil; sendRaw(command); return }
         if command == "/stop" { stopAutomation(); notice("Automation and queued commands stopped."); return }
         do {
             let expanded = try CommandExpansion.aliases(command, rules: configuration.aliases)
@@ -254,7 +259,7 @@ final class MUDSession: ObservableObject {
         // Keep command text literal; game input must not be interpreted as ANSI.
         let visible = command.unicodeScalars.filter { $0.value >= 32 && $0.value != 127 }.map(String.init).joined()
         display((isPasswordInput ? "" : visible) + "\r\n")
-        write(Data((command + "\r\n").utf8))
+        write((command + "\r\n").data(using: configuration.terminalEncoding.foundationEncoding) ?? Data((command + "\r\n").utf8))
     }
 
     private func write(_ data: Data) {
@@ -278,7 +283,12 @@ final class MUDSession: ObservableObject {
                     self.write(output.reply)
                     if let password = output.passwordInput {
                         self.isPasswordInput = password
-                        if password { self.stopAutomation() }
+                        if password {
+                            self.loginStatus = "Login · password required"
+                            self.stopAutomation()
+                        } else if self.loginStatus == "Login · password required" {
+                            self.loginStatus = "Login · waiting for server"
+                        }
                     }
                     if let enabled = output.gmcpEnabled {
                         self.gmcpAvailable = enabled
@@ -290,6 +300,7 @@ final class MUDSession: ObservableObject {
                     }
                     for message in output.messages { self.receiveGMCP(message) }
                     let completed = self.display(output.terminalText)
+                    if !output.terminalText.isEmpty { self.processLoginPrompt(self.terminal.plainLines.last) }
                     self.processTriggers(completed)
                 }
                 if let error { self.connectionLost("Connection error: \(error.localizedDescription)") }
@@ -307,6 +318,29 @@ final class MUDSession: ObservableObject {
         }
         if message.module == "Room.Info" || message.module == "Char.Vitals" {
             startVitalsPolling()
+        }
+    }
+
+    private func processLoginPrompt(_ line: String?) {
+        guard let line, !line.isEmpty, line != lastLoginPromptLine else { return }
+        for rule in configuration.loginPrompts {
+            guard !rule.pattern.isEmpty,
+                  let expression = try? NSRegularExpression(pattern: rule.pattern, options: [.caseInsensitive]),
+                  expression.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil else { continue }
+            lastLoginPromptLine = line
+            switch rule.kind {
+            case .username:
+                loginStatus = "Login · username required"
+                isPasswordInput = false
+            case .password:
+                loginStatus = "Login · password required"
+                isPasswordInput = true
+                stopAutomation()
+            case .ready:
+                loginStatus = "Game data ready"
+                isPasswordInput = false
+            }
+            return
         }
     }
 
