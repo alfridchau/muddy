@@ -9,6 +9,7 @@ struct TerminalView: NSViewRepresentable {
     @Binding var following: Bool
     @Binding var newOutput: Int
     var onResize: (Int, Int) -> Void
+    var onNavigate: (String) -> Bool
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -19,6 +20,9 @@ struct TerminalView: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
         let canvas = TerminalCanvas()
+        canvas.onNavigate = { [weak coordinator = context.coordinator] command in
+            coordinator?.parent.onNavigate(command) ?? false
+        }
         scroll.documentView = canvas
         scroll.contentView.postsBoundsChangedNotifications = true
         scroll.contentView.postsFrameChangedNotifications = true
@@ -46,6 +50,7 @@ struct TerminalView: NSViewRepresentable {
         coordinator.parent = self
         coordinator.lastFollowing = following
         if contentChanged { canvas?.buffer = buffer }
+        canvas?.onNavigate = { [weak coordinator] command in coordinator?.parent.onNavigate(command) ?? false }
         if fontChanged { canvas?.fontSize = fontSize }
         if themeChanged { canvas?.theme = theme }
         if filterChanged { canvas?.filter = search }
@@ -142,8 +147,10 @@ final class TerminalCanvas: NSView {
     private var selectionStart: (row: Int, column: Int)?
     private var selectionEnd: (row: Int, column: Int)?
     private let padding: CGFloat = 20
+    var onNavigate: ((String) -> Bool)?
 
     override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
     var font: NSFont { NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
     var cellWidth: CGFloat { ("M" as NSString).size(withAttributes: [.font: font]).width }
     var lineHeight: CGFloat { ceil(fontSize * 1.65) }
@@ -275,6 +282,7 @@ final class TerminalCanvas: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
         selectionStart = position(event); selectionEnd = selectionStart
         if event.clickCount == 3, let start = selectionStart, visibleRows.indices.contains(start.row) {
             selectionStart = (start.row, 0)
@@ -322,6 +330,21 @@ final class TerminalCanvas: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        let direction: String?
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .function])
+        switch modifiers.isEmpty ? event.charactersIgnoringModifiers?.lowercased() : nil {
+        case "w": direction = "north"
+        case "d": direction = "east"
+        case "s": direction = "south"
+        case "a": direction = "west"
+        case "q": direction = "northwest"
+        case "e": direction = "northeast"
+        case "z": direction = "southwest"
+        case "c": direction = "southeast"
+        default:
+            direction = nil
+        }
+        if let direction, onNavigate?(direction) == true { return }
         if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "c" { copy(nil) }
         else if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "a" { selectAll(nil) }
         else { super.keyDown(with: event) }

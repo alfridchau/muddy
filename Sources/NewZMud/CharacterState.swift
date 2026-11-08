@@ -11,9 +11,13 @@ struct GMCPMessage {
         json = parts.count > 1 ? String(parts[1]) : "{}"
     }
 
-    var object: [String: Any]? {
+    var payload: Any? {
         guard let data = json.data(using: .utf8) else { return nil }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+    }
+
+    var object: [String: Any]? {
+        payload as? [String: Any]
     }
 }
 

@@ -3,12 +3,21 @@ import Network
 
 @MainActor
 final class MUDSession: ObservableObject {
+    static let clientSupportedGMCPModules = ["Char 1", "Char.Vitals 1", "Room 1"]
+    private static var clientSupportedGMCPJSON: String {
+        guard let data = try? JSONSerialization.data(withJSONObject: clientSupportedGMCPModules),
+              let value = String(data: data, encoding: .utf8) else { return "[]" }
+        return value
+    }
+
     @Published private(set) var terminal = TerminalBuffer()
     @Published private(set) var character = CharacterState()
     @Published private(set) var isConnected = false
     @Published private(set) var isConnecting = false
     @Published private(set) var isPasswordInput = false
     @Published private(set) var gmcpAvailable = false
+    @Published private(set) var serverSupportedGMCPModules: [String] = []
+    @Published private(set) var gmcpDiagnostics: [GMCPDiagnosticEntry] = []
     @Published private(set) var loginStatus: String?
     @Published private(set) var automationEnabled = false
     @Published private(set) var queuedCommands = 0
@@ -61,6 +70,8 @@ final class MUDSession: ObservableObject {
         guard let endpoint, let port = NWEndpoint.Port(rawValue: endpoint.port) else { return }
         closeTransport()
         character = CharacterState()
+        serverSupportedGMCPModules = []
+        gmcpDiagnostics = []
         isConnecting = true
         status = "Connecting to \(endpoint.host):\(endpoint.port)…"
         notice(status)
@@ -294,11 +305,14 @@ final class MUDSession: ObservableObject {
                         self.gmcpAvailable = enabled
                         if enabled {
                             self.write(TelnetStream.gmcp(#"Core.Hello {"client":"NewZMud","version":"0.2"}"#))
-                            self.write(TelnetStream.gmcp(#"Core.Supports.Set ["Char 1","Char.Vitals 1","Room 1"]"#))
+                            self.write(TelnetStream.gmcp("Core.Supports.Set \(Self.clientSupportedGMCPJSON)"))
                             self.startVitalsPolling()
                         }
                     }
-                    for message in output.messages { self.receiveGMCP(message) }
+                    for message in output.messages {
+                        self.recordGMCP(message)
+                        self.receiveGMCP(message)
+                    }
                     let completed = self.display(output.terminalText)
                     if !output.terminalText.isEmpty { self.processLoginPrompt(self.terminal.plainLines.last) }
                     self.processTriggers(completed)
@@ -319,6 +333,34 @@ final class MUDSession: ObservableObject {
         if message.module == "Room.Info" || message.module == "Char.Vitals" {
             startVitalsPolling()
         }
+    }
+
+    private func recordGMCP(_ message: GMCPMessage) {
+        let normalizedModule = String(message.module.unicodeScalars
+            .filter { $0.value >= 32 && $0.value != 127 }
+            .map(String.init).joined().prefix(120))
+        guard !normalizedModule.isEmpty else { return }
+        let moduleKey = normalizedModule.lowercased()
+        if let reported = message.payload as? [String], moduleKey == "core.supports.set" || moduleKey == "core.supports.add" {
+            let safeModules = reported.prefix(256).map { value in
+                String(value.unicodeScalars.filter { $0.value >= 32 && $0.value != 127 }.map(String.init).joined().prefix(120))
+            }.filter { !$0.isEmpty }
+            if moduleKey == "core.supports.set" { serverSupportedGMCPModules = Array(Set(safeModules)).sorted() }
+            else { serverSupportedGMCPModules = Array(Set(serverSupportedGMCPModules).union(safeModules)).sorted() }
+        } else if let removed = message.payload as? [String], moduleKey == "core.supports.remove" {
+            let keys = Set(removed.map { $0.lowercased() })
+            serverSupportedGMCPModules.removeAll { keys.contains($0.lowercased()) }
+        }
+
+        let now = Date()
+        if let index = gmcpDiagnostics.firstIndex(where: { $0.module == normalizedModule }) {
+            gmcpDiagnostics[index].record(message, at: now)
+        } else if gmcpDiagnostics.count < 128 {
+            gmcpDiagnostics.append(GMCPDiagnosticEntry(module: normalizedModule, count: 1,
+                                                       lastReceived: now,
+                                                       fields: GMCPDiagnosticEntry.fieldSummaries(message)))
+        }
+        gmcpDiagnostics.sort { $0.lastReceived > $1.lastReceived }
     }
 
     private func processLoginPrompt(_ line: String?) {

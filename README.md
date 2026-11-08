@@ -42,6 +42,8 @@ GMCP negotiation advertises NewZMud and its supported modules. The character pan
 
 Once GMCP is negotiated, the client requests `Char.Vitals.Get` immediately and then every three seconds while connected. Empty pre-login replies are ignored. Name/title only appear if the server sends them. Remote GUI/map download requests are not executed.
 
+Open the GMCP/Telnet indicator in the status bar for local diagnostics: negotiation state, advertised/reported modules, received message counts, timestamps, and top-level field names/types. Payload values are not retained or shown. **Configure stats…** uses discovered `Char.Vitals` fields to set per-world labels, visibility, and order.
+
 ## Automation for each world
 
 Open **Automation → Rules and shortcuts…**. Settings are saved separately for the selected world. Actions configures the character panel's command buttons; Stats maps, orders, and hides server fields; Exits maps reported exits to commands; Login classifies prompt lines without auto-answering them; Display controls text size, encoding, and terminal colors. Enter multiple commands on separate lines or separate them with semicolons.

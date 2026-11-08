@@ -149,46 +149,75 @@ struct CharacterPanel: View {
 }
 
 struct NavigationOverlay: View {
-    @State private var isExpanded = false
     @State private var roomIDCopied = false
+    @State private var dragStart: CGSize?
+    @State private var offsetX = 0.0
+    @State private var offsetY = 0.0
+    var worldID: UUID
     var isDemo: Bool
     var canSend: Bool
     var character: CharacterState
     var exitCommands: [ExitCommandRule]
     var send: (String) -> Void
+    var move: (String) -> Void
 
-    private var exitsSummary: String {
-        let exits = character.exits.sorted().joined(separator: ", ")
-        return exits.isEmpty ? "none reported" : exits
-    }
+    private var offsetXKey: String { "navigationOffsetX.\(worldID.uuidString)" }
+    private var offsetYKey: String { "navigationOffsetY.\(worldID.uuidString)" }
 
     private var displayedExits: [(name: String, command: String)] {
         let mappings = Dictionary(exitCommands.map { ($0.exit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), $0.command) }, uniquingKeysWith: { _, latest in latest })
-        let names = isDemo ? ["nw", "north", "ne", "west", "east", "sw", "south", "se"] : character.exits.sorted()
+        let names = isDemo ? ["north", "east", "south", "west"] : character.exits.sorted()
         return names.map { name in (name, mappings[name.lowercased()] ?? name) }
+    }
+
+    private var compassExits: [String: (name: String, command: String)] {
+        let aliases: [String: String] = ["n": "north", "e": "east", "s": "south", "w": "west",
+                                        "ne": "northeast", "nw": "northwest", "se": "southeast", "sw": "southwest"]
+        return Dictionary(displayedExits.compactMap { exit in
+            let normalized = exit.name.lowercased()
+            let direction = aliases[normalized] ?? normalized
+            return ["north", "east", "south", "west", "northeast", "northwest", "southeast", "southwest"].contains(direction)
+                ? (direction, exit) : nil
+        }, uniquingKeysWith: { _, latest in latest })
+    }
+
+    private var otherExits: [(name: String, command: String)] {
+        displayedExits.filter { exit in
+            !["north", "east", "south", "west", "northeast", "northwest", "southeast", "southwest", "n", "e", "s", "w", "ne", "nw", "se", "sw"].contains(exit.name.lowercased())
+        }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) { isExpanded.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "location.north.fill").font(.system(size: 10)).foregroundStyle(Palette.jade)
-                    Text("Navigation").font(.system(size: 11, weight: .semibold))
-                    if !isExpanded, let room = character.room {
-                        Text("· \(room)").font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(1)
-                    }
-                    Spacer(minLength: 4)
-                    if isDemo { Text("SAMPLE").font(.system(size: 8, weight: .semibold)).tracking(0.8).foregroundStyle(Palette.muted) }
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.muted)
+            HStack(spacing: 6) {
+                Image(systemName: "location.north.fill").font(.system(size: 10)).foregroundStyle(Palette.jade)
+                Text("Navigation").font(.system(size: 11, weight: .semibold))
+                Spacer(minLength: 4)
+                Button {
+                    offsetX = 0; offsetY = 0
+                    UserDefaults.standard.removeObject(forKey: offsetXKey)
+                    UserDefaults.standard.removeObject(forKey: offsetYKey)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 9, weight: .medium)).foregroundStyle(Palette.muted)
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain).help("Reset navigation position")
+                if isDemo { Text("SAMPLE").font(.system(size: 8, weight: .semibold)).tracking(0.8).foregroundStyle(Palette.muted) }
             }
-            .buttonStyle(.plain)
-            .help(isExpanded ? "Collapse navigation" : "Expand navigation")
-            if isExpanded {
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 3)
+                .onChanged { value in
+                    let start = dragStart ?? CGSize(width: offsetX, height: offsetY)
+                    dragStart = start
+                    offsetX = start.width + value.translation.width
+                    offsetY = start.height + value.translation.height
+                }
+                .onEnded { _ in
+                    dragStart = nil
+                    UserDefaults.standard.set(offsetX, forKey: offsetXKey)
+                    UserDefaults.standard.set(offsetY, forKey: offsetYKey)
+                })
+            .help("Drag to move navigation")
                 if !isDemo && (character.room != nil || character.area != nil || character.roomID != nil || character.hasRoom) {
                     VStack(alignment: .leading, spacing: 4) {
                         if let room = character.room {
@@ -206,15 +235,28 @@ struct NavigationOverlay: View {
                             }
                             .buttonStyle(.plain).help("Copy room ID")
                         }
-                        if character.hasRoom {
-                            Text("Exits · \(exitsSummary)").font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(2)
-                        }
                     }
                 }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4) {
-                    ForEach(Array(displayedExits.enumerated()), id: \.offset) { _, exit in
-                        exitButton(exit.name, command: exit.command)
+                if !displayedExits.isEmpty {
+                    VStack(spacing: 4) {
+                        compassRow(["northwest", "north", "northeast"])
+                        compassRow(["west", "center", "east"])
+                        compassRow(["southwest", "south", "southeast"])
                     }
+                    if !otherExits.isEmpty {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
+                            ForEach(Array(otherExits.enumerated()), id: \.offset) { _, exit in
+                                exitButton(exit.name, command: exit.command)
+                            }
+                        }
+                    }
+                    Text("Click output · WASD / QEZC")
+                        .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                } else {
+                    Text("No exits reported")
+                        .font(.system(size: 9)).foregroundStyle(Palette.muted)
+                        .frame(maxWidth: .infinity, alignment: .center).padding(.vertical, 9)
                 }
                 Button { send("look") } label: {
                     Label("Look", systemImage: "location.circle")
@@ -223,21 +265,79 @@ struct NavigationOverlay: View {
                         .background(Palette.jade.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.plain).disabled(!canSend).help("Look around")
-            }
         }
         .padding(12)
-        .frame(width: isExpanded ? 172 : nil)
+        .frame(width: 216)
+        .fixedSize(horizontal: false, vertical: true)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(Palette.border.opacity(0.9), lineWidth: 1))
         .shadow(color: .black.opacity(0.22), radius: 12, y: 5)
+        .offset(x: offsetX, y: offsetY)
+        .onAppear {
+            offsetX = UserDefaults.standard.double(forKey: offsetXKey)
+            offsetY = UserDefaults.standard.double(forKey: offsetYKey)
+        }
+    }
+
+    private func compassRow(_ directions: [String]) -> some View {
+        HStack(spacing: 4) {
+            ForEach(directions, id: \.self) { direction in
+                if direction == "center" {
+                    Image(systemName: "location.north.fill")
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.muted.opacity(0.5))
+                        .frame(maxWidth: .infinity, minHeight: 31)
+                        .background(Palette.raised.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+                } else if let exit = compassExits[direction] {
+                    Button { move(exit.command) } label: {
+                        VStack(spacing: 2) {
+                            Image(systemName: directionSymbol(direction))
+                                .font(.system(size: 10, weight: .bold))
+                            Text(shortDirection(exit.name))
+                                .font(.system(size: 7, weight: .medium, design: .monospaced)).lineLimit(1)
+                        }
+                        .foregroundStyle(Palette.jade).frame(maxWidth: .infinity, minHeight: 31)
+                        .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 6))
+                        .contentShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain).disabled(!canSend).help("Exit: \(exit.name) · command: \(exit.command)")
+                } else {
+                    Color.clear.frame(maxWidth: .infinity, minHeight: 31)
+                }
+            }
+        }
+    }
+
+    private func directionSymbol(_ direction: String) -> String {
+        switch direction {
+        case "north": "arrow.up"
+        case "east": "arrow.right"
+        case "south": "arrow.down"
+        case "west": "arrow.left"
+        case "northeast": "arrow.up.right"
+        case "northwest": "arrow.up.left"
+        case "southeast": "arrow.down.right"
+        default: "arrow.down.left"
+        }
+    }
+
+    private func shortDirection(_ name: String) -> String {
+        let short: [String: String] = ["north": "N", "east": "E", "south": "S", "west": "W",
+                                      "northeast": "NE", "northwest": "NW", "southeast": "SE", "southwest": "SW",
+                                      "n": "N", "e": "E", "s": "S", "w": "W"]
+        return short[name.lowercased()] ?? name.uppercased()
     }
 
     private func exitButton(_ exit: String, command: String) -> some View {
-        Button { send(command) } label: {
-            Text(exit.uppercased()).font(.system(size: 9, weight: .medium, design: .monospaced))
-                .lineLimit(1).minimumScaleFactor(0.65)
+        Button { move(command) } label: {
+            HStack {
+                Text(exit.uppercased()).font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .lineLimit(1).minimumScaleFactor(0.65)
+                Spacer(minLength: 4)
+                Image(systemName: "arrow.up.right").font(.system(size: 8, weight: .medium)).foregroundStyle(Palette.muted)
+            }
+            .padding(.horizontal, 10)
                 .foregroundStyle(Palette.jade)
-                .frame(maxWidth: .infinity, minHeight: 30)
+                .frame(maxWidth: .infinity, minHeight: 28)
                 .background(Palette.raised.opacity(0.7))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
         }

@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var showHistory = false
     @State private var search = ""
     @State private var showSearch = false
+    @State private var showGMCPDiagnostics = false
     @State private var demoLines = DemoWorld.introduction
     @State private var focusRequest = 0
     @State private var showAutomation = false
@@ -41,10 +42,17 @@ struct ContentView: View {
         return buffer
     }
     private var completionWords: [String] {
-        let common = ["look", "inventory", "score", "help", "hp", "who", "quit", "say", "north", "south", "east", "west", "get", "drop", "/walk", "/stop"]
-        let recent = session.lines.suffix(100).joined(separator: " ")
-            .components(separatedBy: CharacterSet.alphanumerics.inverted).filter { $0.count > 1 && $0.count < 30 }
-        return common + automation.configuration.aliases.filter(\.enabled).map(\.name) + recent.suffix(300) + history
+        let actionCommands = automation.configuration.quickActions.filter(\.enabled).flatMap { action in
+            CommandExpansion.actions(action.command).flatMap { command in
+                [command, String(command.split(whereSeparator: \.isWhitespace).first ?? "")]
+            }
+        }
+        let exitMappings = automation.configuration.exitCommands
+        let exits = (world.isDemo ? ["north", "east", "south", "west"] : Array(session.character.exits)).flatMap { exit in
+            [exit, exitMappings.first { $0.exit.caseInsensitiveCompare(exit) == .orderedSame }?.command ?? exit]
+        }
+        let aliases = automation.configuration.aliases.filter(\.enabled).map(\.name)
+        return ["/walk", "/stop"] + actionCommands + exits + aliases + history
     }
 
     var body: some View {
@@ -95,6 +103,9 @@ struct ContentView: View {
         .sheet(isPresented: $showAutomation) {
             AutomationEditor(draft: automation.configuration, worldName: world.name,
                              currentVitals: session.character.vitals) { automation.configuration = $0 }
+        }
+        .sheet(isPresented: $showGMCPDiagnostics) {
+            GMCPDiagnosticsView(session: session, automation: automation)
         }
         .background {
             ShortcutMonitor(rules: automation.configuration.keys,
@@ -306,6 +317,8 @@ struct ContentView: View {
                      following: $followingOutput, newOutput: $pendingOutput) { columns, rows in
             terminalColumns = columns; terminalRows = rows
             if !world.isDemo { session.resize(columns: columns, rows: rows) }
+        } onNavigate: { direction in
+            navigate(direction)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottomTrailing) {
@@ -322,10 +335,14 @@ struct ContentView: View {
         }
         .overlay(alignment: .topTrailing) {
             if world.isDemo || (session.isConnected && session.character.hasRoom) {
-                NavigationOverlay(isDemo: world.isDemo, canSend: canPlay,
+                NavigationOverlay(worldID: world.id, isDemo: world.isDemo, canSend: canPlay,
                                   character: session.character,
                                   exitCommands: automation.configuration.exitCommands,
-                                  send: submit)
+                                  send: submit,
+                                  move: { command in
+                    submit(command)
+                })
+                    .id(world.id)
                     .padding(16)
             }
         }
@@ -354,11 +371,16 @@ struct ContentView: View {
             HStack(spacing: 14) {
                 Text("↑↓ history · Tab complete · ⌘K focus").font(.system(size: 10)).foregroundStyle(Palette.muted)
                 Rectangle().fill(Palette.border).frame(width: 1, height: 10)
-                ForEach(["look", "inventory", "score"], id: \.self) { text in
-                    Button(text) { submit(text) }
-                        .buttonStyle(.plain).font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(Palette.muted).disabled(!canPlay)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(automation.configuration.quickActions.filter(\.enabled)) { action in
+                            Button(action.title) { submit(action.command) }
+                                .buttonStyle(.plain).font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(Palette.muted).disabled(!canPlay)
+                        }
+                    }
                 }
+                .frame(maxWidth: 300, alignment: .leading)
                 Spacer()
                 Button { showHistory.toggle() } label: {
                     Label("History", systemImage: "clock.arrow.circlepath").font(.system(size: 10))
@@ -417,7 +439,13 @@ struct ContentView: View {
             Text(connectionStatusText)
             Spacer()
             if session.queuedCommands > 0 { Text("\(session.queuedCommands) queued"); Text("·") }
-            Text(world.isDemo ? "Sample character & room data" : (session.gmcpAvailable ? "GMCP" : "Telnet"))
+            Button { showGMCPDiagnostics = true } label: {
+                HStack(spacing: 4) {
+                    Text(world.isDemo ? "Sample data" : (session.gmcpAvailable ? "GMCP" : "Telnet"))
+                    Image(systemName: "waveform.path.ecg").font(.system(size: 9))
+                }
+            }
+            .buttonStyle(.plain).help("Open GMCP diagnostics")
             Text("·").padding(.horizontal, 5)
             Text(world.isDemo ? "UTF-8 preview" : automation.configuration.terminalEncoding.title)
         }
@@ -487,6 +515,33 @@ struct ContentView: View {
     }
 
     private func submit(_ text: String) {
+        submit(text, focusInput: true)
+    }
+
+    private func navigate(_ direction: String) -> Bool {
+        guard canPlay else { return false }
+        if world.isDemo {
+            submit(direction, focusInput: false)
+            return true
+        }
+        let aliases: [String: Set<String>] = [
+            "north": ["north", "n"], "east": ["east", "e"],
+            "south": ["south", "s"], "west": ["west", "w"],
+            "northwest": ["northwest", "north-west", "nw"],
+            "northeast": ["northeast", "north-east", "ne"],
+            "southwest": ["southwest", "south-west", "sw"],
+            "southeast": ["southeast", "south-east", "se"]
+        ]
+        guard let accepted = aliases[direction],
+              let reportedExit = session.character.exits.first(where: { accepted.contains($0.lowercased()) }) else { return false }
+        let command = automation.configuration.exitCommands.first {
+            $0.exit.caseInsensitiveCompare(reportedExit) == .orderedSame
+        }?.command ?? reportedExit
+        submit(command, focusInput: false)
+        return true
+    }
+
+    private func submit(_ text: String, focusInput: Bool) {
         guard canSend, !world.isDemo || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if !session.isPasswordInput && !text.isEmpty {
             history.append(text)
@@ -505,6 +560,6 @@ struct ContentView: View {
             session.send(text)
         }
         command = ""
-        focusRequest += 1
+        if focusInput { focusRequest += 1 }
     }
 }
