@@ -140,7 +140,6 @@ final class TerminalCanvas: NSView {
     private let padding: CGFloat = 20
 
     override var isFlipped: Bool { true }
-    override var acceptsFirstResponder: Bool { true }
     var font: NSFont { NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
     var cellWidth: CGFloat { ("M" as NSString).size(withAttributes: [.font: font]).width }
     var lineHeight: CGFloat { ceil(fontSize * 1.65) }
@@ -258,7 +257,6 @@ final class TerminalCanvas: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
         selectionStart = position(event); selectionEnd = selectionStart
         if event.clickCount == 3, let start = selectionStart, visibleRows.indices.contains(start.row) {
             selectionStart = (start.row, 0)

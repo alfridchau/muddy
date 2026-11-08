@@ -51,11 +51,12 @@ final class AutomationTests: XCTestCase {
     }
     func testGameSpecificGMCPFieldsAndRoomExits() throws {
         var character = CharacterState()
-        character.receive(try XCTUnwrap(GMCPMessage(#"Char.Vitals {"hp":820,"max_hp":1000,"jing":240,"max_jing":300,"neili":360,"max_neili":500,"exp":12450}"#)))
+        character.receive(try XCTUnwrap(GMCPMessage(#"Char.Vitals {"hp":820,"max_hp":1000,"jing":240,"max_jing":300,"jingli":180,"max_jingli":300,"neili":360,"max_neili":500,"exp":12450}"#)))
         character.receive(try XCTUnwrap(GMCPMessage(#"Room.Info {"name":"扬州广场","area":"city","exits":["north","east"]}"#)))
         XCTAssertEqual(character.health.fraction, 0.82, accuracy: 0.001)
         XCTAssertEqual(character.innerPower.current, 360)
-        XCTAssertEqual(character.spirit.current, 240)
+        XCTAssertEqual(character.essence.current, 240)
+        XCTAssertEqual(character.stamina.current, 180)
         XCTAssertEqual(character.experience, 12450)
         XCTAssertEqual(character.room, "扬州广场")
         XCTAssertEqual(character.exits, ["north", "east"])

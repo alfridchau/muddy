@@ -34,8 +34,9 @@ struct CharacterState {
     var name: String?
     var title: String?
     var health = CharacterMeter()
+    var essence = CharacterMeter()
+    var stamina = CharacterMeter()
     var innerPower = CharacterMeter()
-    var spirit = CharacterMeter()
     var experience: Int?
     var room: String?
     var area: String?
@@ -56,10 +57,12 @@ struct CharacterState {
         case "char.vitals":
             health.current = number("hp", "qi") ?? health.current
             health.maximum = number("max_hp", "maxhp", "max_qi") ?? health.maximum
+            essence.current = number("jing", "sp") ?? essence.current
+            essence.maximum = number("max_jing", "max_sp") ?? essence.maximum
+            stamina.current = number("jingli", "stamina") ?? stamina.current
+            stamina.maximum = number("max_jingli", "max_stamina") ?? stamina.maximum
             innerPower.current = number("neili", "mana", "mp") ?? innerPower.current
             innerPower.maximum = number("max_neili", "maxmana", "max_mana", "max_mp") ?? innerPower.maximum
-            spirit.current = number("jing", "sp") ?? spirit.current
-            spirit.maximum = number("max_jing", "max_sp") ?? spirit.maximum
             experience = number("exp", "experience", "combat_exp") ?? experience
         case "char.status", "char.name":
             name = data["name"] as? String ?? name

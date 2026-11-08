@@ -33,8 +33,9 @@ struct CharacterPanel: View {
                 }
                 VStack(spacing: 18) {
                     stat("气血", label: "Health", value: isDemo ? "820 / 1,000" : character.health.text, fraction: isDemo ? 0.82 : character.health.fraction, color: Palette.jade)
+                    stat("精气", label: "Essence", value: isDemo ? "240 / 300" : character.essence.text, fraction: isDemo ? 0.8 : character.essence.fraction, color: Palette.gold)
+                    stat("精力", label: "Stamina", value: isDemo ? "180 / 300" : character.stamina.text, fraction: isDemo ? 0.6 : character.stamina.fraction, color: Color(red: 0.76, green: 0.61, blue: 0.84))
                     stat("内力", label: "Inner power", value: isDemo ? "360 / 500" : character.innerPower.text, fraction: isDemo ? 0.72 : character.innerPower.fraction, color: Color(red: 0.52, green: 0.66, blue: 0.85))
-                    stat("精神", label: "Spirit", value: isDemo ? "240 / 300" : character.spirit.text, fraction: isDemo ? 0.8 : character.spirit.fraction, color: Palette.gold)
                 }
                 HStack {
                     Text("Experience").foregroundStyle(Palette.muted)
