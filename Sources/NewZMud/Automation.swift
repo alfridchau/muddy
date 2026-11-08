@@ -37,13 +37,54 @@ struct KeyRule: Identifiable, Codable, Equatable {
         (control ? "⌃" : "") + (option ? "⌥" : "") + (shift ? "⇧" : "") + (command ? "⌘" : "") + key.uppercased()
     }
 }
+struct QuickAction: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var enabled = true
+    var title = ""
+    var command = ""
+    var symbol = "bolt"
+
+    static let defaults = [
+        QuickAction(title: "Look around", command: "look", symbol: "eye"),
+        QuickAction(title: "Inventory", command: "inventory", symbol: "bag"),
+        QuickAction(title: "Character sheet", command: "score", symbol: "person.text.rectangle"),
+        QuickAction(title: "Help", command: "help", symbol: "questionmark.circle")
+    ]
+}
+struct VitalLabelRule: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var field = ""
+    var label = ""
+}
 struct WorldConfiguration: Codable, Equatable {
     var aliases: [AliasRule] = []
     var triggers: [TriggerRule] = []
     var timers: [TimerRule] = []
     var keys: [KeyRule] = []
+    var quickActions = QuickAction.defaults
+    var vitalLabels: [VitalLabelRule] = []
+    var hideEmptyVitals = true
     var walkDelay: Double = 0.4
     var autoReconnect = false
+
+    private enum CodingKeys: String, CodingKey {
+        case aliases, triggers, timers, keys, quickActions, vitalLabels, hideEmptyVitals, walkDelay, autoReconnect
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        aliases = try values.decodeIfPresent([AliasRule].self, forKey: .aliases) ?? []
+        triggers = try values.decodeIfPresent([TriggerRule].self, forKey: .triggers) ?? []
+        timers = try values.decodeIfPresent([TimerRule].self, forKey: .timers) ?? []
+        keys = try values.decodeIfPresent([KeyRule].self, forKey: .keys) ?? []
+        quickActions = try values.decodeIfPresent([QuickAction].self, forKey: .quickActions) ?? QuickAction.defaults
+        vitalLabels = try values.decodeIfPresent([VitalLabelRule].self, forKey: .vitalLabels) ?? []
+        hideEmptyVitals = try values.decodeIfPresent(Bool.self, forKey: .hideEmptyVitals) ?? true
+        walkDelay = try values.decodeIfPresent(Double.self, forKey: .walkDelay) ?? 0.4
+        autoReconnect = try values.decodeIfPresent(Bool.self, forKey: .autoReconnect) ?? false
+    }
 }
 
 @MainActor

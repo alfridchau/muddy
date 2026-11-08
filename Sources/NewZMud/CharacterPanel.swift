@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct CharacterPanel: View {
     var isDemo: Bool
@@ -6,18 +7,31 @@ struct CharacterPanel: View {
     var character: CharacterState
     var gmcpAvailable: Bool
     var isConnected: Bool
+    var quickActions: [QuickAction]
+    var vitalLabels: [VitalLabelRule]
+    var hideEmptyVitals: Bool
     var send: (String) -> Void
 
     private var displayedVitals: [CharacterVital] {
+        let vitals: [CharacterVital]
         if isDemo {
-            return [
+            vitals = [
                 CharacterVital(id: "hp", name: "Health", current: 820, maximum: 1_000),
                 CharacterVital(id: "mp", name: "Mana", current: 240, maximum: 300),
                 CharacterVital(id: "moves", name: "Movement", current: 180, maximum: 300),
                 CharacterVital(id: "energy", name: "Energy", current: 360, maximum: 500)
             ]
+        } else {
+            vitals = character.vitals
         }
-        return character.vitals
+        let labels = Dictionary(vitalLabels.map { ($0.field.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), $0.label) }, uniquingKeysWith: { _, latest in latest })
+        return vitals
+            .filter { !(hideEmptyVitals && $0.current == 0 && $0.maximum == 0) }
+            .map { vital in
+                var vital = vital
+                if !isDemo, let label = labels[vital.id.lowercased()], !label.isEmpty { vital.name = label }
+                return vital
+            }
     }
 
     private let vitalColors: [Color] = [
@@ -71,12 +85,13 @@ struct CharacterPanel: View {
                     }.font(.system(size: 11))
                 }
                 Rectangle().fill(Palette.border).frame(height: 1)
-                VStack(alignment: .leading, spacing: 13) {
-                    SectionLabel(title: "At your fingertips")
-                    shortcut("Look around", command: "look", symbol: "eye")
-                    shortcut("Inventory", command: "inventory", symbol: "bag")
-                    shortcut("Character sheet", command: "score", symbol: "person.text.rectangle")
-                    shortcut("Help", command: "help", symbol: "questionmark.circle")
+                if !quickActions.filter(\.enabled).isEmpty {
+                    VStack(alignment: .leading, spacing: 13) {
+                        SectionLabel(title: "At your fingertips")
+                        ForEach(quickActions.filter(\.enabled)) { action in
+                            shortcut(action.title, command: action.command, symbol: action.symbol)
+                        }
+                    }
                 }
                 if isDemo {
                     HStack(alignment: .top, spacing: 8) {
@@ -124,6 +139,8 @@ struct CharacterPanel: View {
 }
 
 struct NavigationOverlay: View {
+    @State private var isExpanded = false
+    @State private var roomIDCopied = false
     var isDemo: Bool
     var canSend: Bool
     var character: CharacterState
@@ -136,54 +153,75 @@ struct NavigationOverlay: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "location.north.fill").font(.system(size: 10)).foregroundStyle(Palette.jade)
-                Text("Navigation").font(.system(size: 11, weight: .semibold))
-                Spacer()
-                if isDemo { Text("SAMPLE").font(.system(size: 8, weight: .semibold)).tracking(0.8).foregroundStyle(Palette.muted) }
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "location.north.fill").font(.system(size: 10)).foregroundStyle(Palette.jade)
+                    Text("Navigation").font(.system(size: 11, weight: .semibold))
+                    if !isExpanded, let room = character.room {
+                        Text("· \(room)").font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                    if isDemo { Text("SAMPLE").font(.system(size: 8, weight: .semibold)).tracking(0.8).foregroundStyle(Palette.muted) }
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.muted)
+                }
+                .contentShape(Rectangle())
             }
-            if !isDemo && (character.room != nil || character.area != nil || character.roomID != nil || character.hasRoom) {
-                VStack(alignment: .leading, spacing: 3) {
-                    if let room = character.room {
-                        Text(room).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.gold).lineLimit(1)
-                    }
-                    if let area = character.area { Text(area).font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(1) }
-                    if let roomID = character.roomID {
-                        Text("ID · \(roomID)").font(.system(size: 8, design: .monospaced))
-                            .foregroundStyle(Palette.muted).textSelection(.enabled).lineLimit(1)
-                    }
-                    if character.hasRoom {
-                        Text("Exits · \(exitsSummary)").font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(2)
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Collapse navigation" : "Expand navigation")
+            if isExpanded {
+                if !isDemo && (character.room != nil || character.area != nil || character.roomID != nil || character.hasRoom) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let room = character.room {
+                            Text(room).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.gold).lineLimit(1)
+                        }
+                        if let area = character.area { Text("Area · \(area)").font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(1) }
+                        if let roomID = character.roomID {
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(roomID, forType: .string)
+                                roomIDCopied = true
+                            } label: {
+                                Label(roomIDCopied ? "Room ID copied" : "Copy room ID", systemImage: roomIDCopied ? "checkmark" : "doc.on.doc")
+                                    .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
+                            }
+                            .buttonStyle(.plain).help("Copy room ID")
+                        }
+                        if character.hasRoom {
+                            Text("Exits · \(exitsSummary)").font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(2)
+                        }
                     }
                 }
+                VStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        direction("NW", command: "nw")
+                        direction("N", command: "north")
+                        direction("NE", command: "ne")
+                    }
+                    HStack(spacing: 4) {
+                        direction("W", command: "west")
+                        Button { send("look") } label: {
+                            Image(systemName: "location.circle")
+                                .font(.system(size: 15, weight: .light)).foregroundStyle(Palette.jade)
+                                .frame(width: 36, height: 30)
+                                .background(Palette.jade.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 5))
+                        }
+                        .buttonStyle(.plain).disabled(!canSend).help("Look around")
+                        direction("E", command: "east")
+                    }
+                    HStack(spacing: 4) {
+                        direction("SW", command: "sw")
+                        direction("S", command: "south")
+                        direction("SE", command: "se")
+                    }
+                }.frame(maxWidth: .infinity)
             }
-            VStack(spacing: 4) {
-                HStack(spacing: 4) {
-                    direction("NW", command: "nw")
-                    direction("N", command: "north")
-                    direction("NE", command: "ne")
-                }
-                HStack(spacing: 4) {
-                    direction("W", command: "west")
-                    Button { send("look") } label: {
-                        Image(systemName: "location.circle")
-                            .font(.system(size: 15, weight: .light)).foregroundStyle(Palette.jade)
-                            .frame(width: 36, height: 30)
-                            .background(Palette.jade.opacity(0.08))
-                            .clipShape(RoundedRectangle(cornerRadius: 5))
-                    }
-                    .buttonStyle(.plain).disabled(!canSend).help("Look around")
-                    direction("E", command: "east")
-                }
-                HStack(spacing: 4) {
-                    direction("SW", command: "sw")
-                    direction("S", command: "south")
-                    direction("SE", command: "se")
-                }
-            }.frame(maxWidth: .infinity)
         }
         .padding(12)
-        .frame(width: 172)
+        .frame(width: isExpanded ? 172 : nil)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(Palette.border.opacity(0.9), lineWidth: 1))
         .shadow(color: .black.opacity(0.22), radius: 12, y: 5)

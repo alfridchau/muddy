@@ -68,7 +68,13 @@ struct ContentView: View {
                     }
                     if showInspector && (world.isDemo || (session.isConnected && session.character.hasCharacterInfo)) {
                         Rectangle().fill(Palette.border).frame(width: 1)
-                        CharacterPanel(isDemo: world.isDemo, canSend: canPlay, character: session.character, gmcpAvailable: session.gmcpAvailable, isConnected: session.isConnected, send: submit)
+                        CharacterPanel(isDemo: world.isDemo, canSend: canPlay,
+                                       character: session.character, gmcpAvailable: session.gmcpAvailable,
+                                       isConnected: session.isConnected,
+                                       quickActions: automation.configuration.quickActions,
+                                       vitalLabels: automation.configuration.vitalLabels,
+                                       hideEmptyVitals: automation.configuration.hideEmptyVitals,
+                                       send: submit)
                             .frame(width: 246)
                     }
                 }
@@ -402,8 +408,8 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack(spacing: 7) {
-            Circle().fill(world.isDemo ? Palette.gold : (session.isConnected ? Palette.jade : Palette.muted)).frame(width: 5, height: 5)
-            Text(world.isDemo ? "Preview mode" : session.status)
+            Circle().fill(statusIndicatorColor).frame(width: 5, height: 5)
+            Text(connectionStatusText)
             Spacer()
             if session.queuedCommands > 0 { Text("\(session.queuedCommands) queued"); Text("·") }
             Text(world.isDemo ? "Sample character & room data" : (session.gmcpAvailable ? "GMCP connected" : "Telnet"))
@@ -414,6 +420,21 @@ struct ContentView: View {
         .padding(.horizontal, 22).padding(.vertical, 10)
         .background(Palette.panel)
         .overlay(alignment: .top) { Rectangle().fill(Palette.border).frame(height: 1) }
+    }
+
+    private var connectionStatusText: String {
+        if world.isDemo { return "Preview mode" }
+        guard session.isConnected else { return session.status }
+        if session.isPasswordInput { return "Login · password required" }
+        if session.character.hasCharacterInfo { return "Game data ready" }
+        if session.gmcpAvailable { return "GMCP connected · waiting for login" }
+        return "Telnet connected · waiting for game data"
+    }
+
+    private var statusIndicatorColor: Color {
+        if world.isDemo { return Palette.gold }
+        guard session.isConnected else { return Palette.muted }
+        return session.character.hasCharacterInfo ? Palette.jade : Palette.gold
     }
 
     private var canSend: Bool { world.isDemo || session.isConnected }
