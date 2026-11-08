@@ -19,7 +19,7 @@ With the game in the sibling `../mud` folder and FluffOS built at `../mud/fluffo
 ./scripts/run-local-mud.sh
 ```
 
-Add a world with host `127.0.0.1` and port `6666` (UTF-8), select it, and click Connect. Enter your character's English ID and follow the game prompts. Password input is hidden when the server requests no echo, and password replies are excluded from command history, local echo, and automation. Empty Enter is supported for prompts.
+Add a world with host `127.0.0.1` and port `6666` (UTF-8), select it, and click Connect. Follow the prompts shown by the game in the terminal. Password input uses a secure field when the server requests no echo; password replies are excluded from command history, terminal output, and automation, and are never saved. Empty Enter is supported for prompts.
 
 The server also offers GBK Telnet on `5566` and a browser client at `http://127.0.0.1:8888/`. NewZMud currently uses UTF-8, so use `6666`. The browser client's address fields must also be set to the local host if you use it.
 
@@ -58,7 +58,7 @@ Aliases and keys work when invoked manually. After signing in, use **Automation 
 
 ## Connection recovery
 
-**Automation → Reconnect automatically** is an optional preference for each world. Unexpected connection loss retries up to five times after 3, 6, 12, 24, and 30 seconds; the status bar shows the countdown and the connection button cancels it. Manual Disconnect never reconnects automatically. Connect can be used again after the retry limit. Credentials and commands are never replayed.
+When the connection drops, the recovery banner offers **Reconnect now** and keeps the terminal transcript visible. The server may ask you to sign in again. **Automation → Reconnect automatically** is an optional preference for each world; it retries up to five times after 3, 6, 12, 24, and 30 seconds. You can reconnect immediately during the countdown or cancel retries with the connection button. After the retry limit, use Reconnect to try again. Manual Disconnect never reconnects automatically. Credentials and commands are never replayed.
 
 ## Offline preview
 

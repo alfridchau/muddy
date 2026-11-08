@@ -35,14 +35,25 @@ struct TerminalView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         let changed = coordinator.canvas?.buffer.outputRevision != buffer.outputRevision
+        let canvas = coordinator.canvas
+        let contentChanged = canvas?.buffer.revision != buffer.revision
+        let fontChanged = canvas?.fontSize != fontSize
+        let filterChanged = canvas?.filter != search
+        let initialRefresh = !(canvas?.hasRefreshed ?? false)
+        let resumedFollowing = !coordinator.lastFollowing && following
         coordinator.parent = self
-        coordinator.programmatic = true
-        coordinator.canvas?.buffer = buffer
-        coordinator.canvas?.fontSize = fontSize
-        coordinator.canvas?.filter = search
-        coordinator.canvas?.refreshRows()
-        coordinator.layout()
-        coordinator.programmatic = false
+        coordinator.lastFollowing = following
+        if contentChanged { canvas?.buffer = buffer }
+        if fontChanged { canvas?.fontSize = fontSize }
+        if filterChanged { canvas?.filter = search }
+        if contentChanged || filterChanged || initialRefresh {
+            canvas?.refreshRows(updateAccessibility: contentChanged || initialRefresh)
+        }
+        if contentChanged || fontChanged || filterChanged || initialRefresh {
+            coordinator.layout()
+        } else if resumedFollowing {
+            coordinator.scrollToBottom()
+        }
         if changed && !following {
             DispatchQueue.main.async { coordinator.parent.newOutput += 1 }
         }
@@ -55,11 +66,12 @@ struct TerminalView: NSViewRepresentable {
         var boundsObserver: NSObjectProtocol?
         var frameObserver: NSObjectProtocol?
         var programmatic = false
+        var lastFollowing: Bool
         var lastColumns = 0
         var lastRows = 0
         var resizeWork: DispatchWorkItem?
 
-        init(_ parent: TerminalView) { self.parent = parent }
+        init(_ parent: TerminalView) { self.parent = parent; lastFollowing = parent.following }
         deinit {
             if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
             if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }
@@ -70,10 +82,20 @@ struct TerminalView: NSViewRepresentable {
             guard !programmatic, let scroll, let canvas else { return }
             let remaining = canvas.frame.height - scroll.contentView.bounds.maxY
             let atBottom = remaining < canvas.lineHeight * 1.5
+            guard parent.following != atBottom || (atBottom && parent.newOutput > 0) else { return }
             DispatchQueue.main.async {
-                self.parent.following = atBottom
-                if atBottom { self.parent.newOutput = 0 }
+                if self.parent.following != atBottom { self.parent.following = atBottom }
+                if atBottom && self.parent.newOutput > 0 { self.parent.newOutput = 0 }
             }
+        }
+
+        func scrollToBottom() {
+            guard let scroll, let canvas else { return }
+            let visible = scroll.contentView.bounds
+            programmatic = true
+            scroll.contentView.scroll(to: NSPoint(x: visible.minX, y: max(0, canvas.frame.height - visible.height)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            programmatic = false
         }
 
         func layout() {
@@ -85,9 +107,8 @@ struct TerminalView: NSViewRepresentable {
             guard visible.width > 40, visible.height > 32 else { return }
             let columns = max(20, Int((visible.width - 40) / canvas.cellWidth))
             let rows = max(5, Int((visible.height - 32) / canvas.lineHeight))
-            let longest = canvas.visibleRows.map { canvas.buffer.rows[$0].cells.count }.max() ?? columns
             canvas.setFrameSize(NSSize(
-                width: max(visible.width, CGFloat(longest) * canvas.cellWidth + 40),
+                width: max(visible.width, CGFloat(canvas.longestVisibleRow) * canvas.cellWidth + 40),
                 height: max(visible.height, CGFloat(canvas.visibleRows.count) * canvas.lineHeight + 32)
             ))
             if parent.following {
@@ -112,6 +133,8 @@ final class TerminalCanvas: NSView {
     var fontSize: Double = 14
     var filter = ""
     var visibleRows: [Int] = []
+    var longestVisibleRow = 0
+    var hasRefreshed = false
     private var selectionStart: (row: Int, column: Int)?
     private var selectionEnd: (row: Int, column: Int)?
     private let padding: CGFloat = 20
@@ -130,9 +153,13 @@ final class TerminalCanvas: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func refreshRows() {
+    func refreshRows(updateAccessibility: Bool) {
         visibleRows = buffer.rows.indices.filter { filter.isEmpty || buffer.rows[$0].text.localizedCaseInsensitiveContains(filter) }
-        setAccessibilityValue(visibleRows.map { buffer.rows[$0].text }.joined(separator: "\n"))
+        longestVisibleRow = visibleRows.map { buffer.rows[$0].cells.count }.max() ?? 0
+        hasRefreshed = true
+        if updateAccessibility {
+            setAccessibilityValue(visibleRows.map { buffer.rows[$0].text }.joined(separator: "\n"))
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -144,31 +171,54 @@ final class TerminalCanvas: NSView {
         guard first <= last else { return }
         for displayed in first...last {
             let row = buffer.rows[visibleRows[displayed]]
-            for (column, cell) in row.cells.enumerated() where cell.width > 0 {
-                let rect = NSRect(x: padding + CGFloat(column) * cellWidth, y: 16 + CGFloat(displayed) * lineHeight,
-                                  width: CGFloat(cell.width) * cellWidth, height: lineHeight)
-                if !dirtyRect.intersects(rect) { continue }
-                var foreground = Self.color(cell.style.foreground, fallback: NSColor(Palette.ink), bright: cell.style.bold)
-                var background = Self.color(cell.style.background, fallback: NSColor(Palette.canvas))
-                if cell.style.inverse { swap(&foreground, &background) }
-                if isSelected(displayed, column) { background = NSColor(Palette.jade).withAlphaComponent(0.27) }
-                NSGraphicsContext.current?.cgContext.setShouldAntialias(false)
-                background.setFill(); rect.fill()
-                NSGraphicsContext.current?.cgContext.setShouldAntialias(true)
-                let base = NSFont.monospacedSystemFont(ofSize: fontSize, weight: cell.style.bold ? .bold : .regular)
-                let renderedFont = cell.style.italic ? NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask) : base
-                (cell.text as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY + (lineHeight - fontSize) / 2 - 2),
-                                           withAttributes: [.font: renderedFont, .foregroundColor: foreground])
-                if cell.style.underline {
-                    foreground.setFill()
-                    NSRect(x: rect.minX, y: rect.maxY - 3, width: rect.width, height: 1).fill()
+            let rowRect = NSRect(x: 0, y: 16 + CGFloat(displayed) * lineHeight, width: bounds.width, height: lineHeight)
+            guard dirtyRect.intersects(rowRect) else { continue }
+            var column = 0
+            while column < row.cells.count {
+                if row.cells[column].width == 0 { column += 1; continue }
+                let start = column
+                let style = row.cells[column].style
+                column += 1
+                while column < row.cells.count {
+                    if row.cells[column].width > 0 && row.cells[column].style != style { break }
+                    column += 1
                 }
+                drawStyleRun(row, displayedRow: displayed, start: start, end: column, style: style)
             }
         }
         if buffer.cursorVisible, filter.isEmpty, let row = visibleRows.firstIndex(of: buffer.cursorRow) {
             NSColor(Palette.jade).withAlphaComponent(0.55).setFill()
             NSRect(x: padding + CGFloat(min(buffer.columns - 1, buffer.cursorColumn)) * cellWidth,
                    y: 16 + CGFloat(row + 1) * lineHeight - 2, width: cellWidth, height: 1).fill()
+        }
+    }
+
+    private func drawStyleRun(_ row: TerminalRow, displayedRow: Int, start: Int, end: Int, style: CellStyle) {
+        let rect = NSRect(x: padding + CGFloat(start) * cellWidth,
+                          y: 16 + CGFloat(displayedRow) * lineHeight,
+                          width: CGFloat(end - start) * cellWidth, height: lineHeight)
+        var foreground = Self.color(style.foreground, fallback: NSColor(Palette.ink), bright: style.bold)
+        var background = Self.color(style.background, fallback: NSColor(Palette.canvas))
+        if style.inverse { swap(&foreground, &background) }
+        NSGraphicsContext.current?.cgContext.setShouldAntialias(false)
+        background.setFill(); rect.fill()
+        NSGraphicsContext.current?.cgContext.setShouldAntialias(true)
+        let base = NSFont.monospacedSystemFont(ofSize: fontSize, weight: style.bold ? .bold : .regular)
+        let renderedFont = style.italic ? NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask) : base
+        for column in start..<end where row.cells[column].width > 0 {
+            let cell = row.cells[column]
+            let cellRect = NSRect(x: padding + CGFloat(column) * cellWidth, y: rect.minY,
+                                  width: CGFloat(cell.width) * cellWidth, height: lineHeight)
+            if isSelected(displayedRow, column) {
+                NSColor(Palette.jade).withAlphaComponent(0.27).setFill()
+                cellRect.fill()
+            }
+            (cell.text as NSString).draw(at: NSPoint(x: cellRect.minX, y: cellRect.minY + (lineHeight - fontSize) / 2 - 2),
+                                         withAttributes: [.font: renderedFont, .foregroundColor: foreground])
+        }
+        if style.underline {
+            foreground.setFill()
+            NSRect(x: rect.minX, y: rect.maxY - 3, width: rect.width, height: 1).fill()
         }
     }
 

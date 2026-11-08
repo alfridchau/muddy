@@ -165,4 +165,22 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(server.occurrences("look\r\n"), 1)
         XCTAssertFalse(session.automationEnabled)
     }
+
+    @MainActor
+    func testManualReconnectKeepsTranscriptAndReopensSelectedEndpoint() async throws {
+        let server = try LocalGame(greeting: Data("Welcome back\r\nName: ".utf8))
+        try await server.start()
+        let session = MUDSession()
+        defer { session.disconnect(announce: false); server.stop() }
+        session.connect(host: "127.0.0.1", port: server.port)
+        try await wait { session.terminal.plainText.contains("Name:") }
+        server.closeClients()
+        try await wait { session.canReconnect }
+        XCTAssertTrue(session.terminal.plainText.contains("Welcome back"))
+
+        session.reconnectNow()
+        try await wait { server.connectionCount == 2 && session.isConnected }
+        XCTAssertTrue(session.terminal.plainText.contains("Welcome back"))
+        XCTAssertTrue(session.terminal.plainText.contains("Name:"))
+    }
 }

@@ -8,7 +8,6 @@ final class MUDSession: ObservableObject {
     @Published private(set) var isConnected = false
     @Published private(set) var isConnecting = false
     @Published private(set) var isPasswordInput = false
-    @Published private(set) var loginStep: LoginStep?
     @Published private(set) var gmcpAvailable = false
     @Published private(set) var automationEnabled = false
     @Published private(set) var queuedCommands = 0
@@ -17,6 +16,7 @@ final class MUDSession: ObservableObject {
 
     var lines: [String] { terminal.plainLines }
     var canCancelConnection: Bool { isConnected || isConnecting || reconnectIn != nil }
+    var canReconnect: Bool { endpoint != nil && !isConnected && !isConnecting && reconnectIn == nil }
     private var connection: NWConnection?
     private let networkQueue = DispatchQueue(label: "NewZMud.network")
     private var stream = TelnetStream()
@@ -51,7 +51,6 @@ final class MUDSession: ObservableObject {
         endpoint = (host, port)
         retryAttempt = 0
         terminal.clear()
-        loginStep = nil
         openConnection()
     }
 
@@ -59,7 +58,6 @@ final class MUDSession: ObservableObject {
         guard let endpoint, let port = NWEndpoint.Port(rawValue: endpoint.port) else { return }
         closeTransport()
         character = CharacterState()
-        loginStep = nil
         isConnecting = true
         status = "Connecting to \(endpoint.host):\(endpoint.port)…"
         notice(status)
@@ -104,6 +102,14 @@ final class MUDSession: ObservableObject {
         if announce { notice("Disconnected.") }
     }
 
+    /// Reopens the last endpoint, preserving the transcript for context.
+    func reconnectNow() {
+        guard endpoint != nil else { return }
+        retryTask?.cancel(); retryTask = nil; reconnectIn = nil
+        retryAttempt = 0
+        openConnection()
+    }
+
     private func closeTransport() {
         timeoutTask?.cancel(); timeoutTask = nil
         stableConnectionTask?.cancel(); stableConnectionTask = nil
@@ -112,7 +118,6 @@ final class MUDSession: ObservableObject {
         connection?.stateUpdateHandler = nil
         connection?.cancel(); connection = nil
         isConnected = false; isConnecting = false; isPasswordInput = false
-        loginStep = nil
         gmcpAvailable = false; characterReady = false
         stream = TelnetStream()
         _ = stream.resize(columns: terminalColumns, rows: terminalRows)
@@ -274,9 +279,6 @@ final class MUDSession: ObservableObject {
                         self.isPasswordInput = password
                         if password { self.stopAutomation() }
                     }
-                    if let step = LoginStep.detect(in: output.text, passwordInput: self.isPasswordInput) {
-                        self.loginStep = step
-                    }
                     if let enabled = output.gmcpEnabled {
                         self.gmcpAvailable = enabled
                         if enabled {
@@ -285,7 +287,6 @@ final class MUDSession: ObservableObject {
                         }
                     }
                     for message in output.messages { self.receiveGMCP(message) }
-                    if self.characterReady { self.loginStep = nil }
                     let completed = self.display(output.terminalText)
                     self.processTriggers(completed)
                 }

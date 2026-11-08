@@ -59,8 +59,9 @@ struct ContentView: View {
                         terminalToolbar
                         if showSearch { searchBar }
                         terminal
-                        if !world.isDemo, session.isConnected, let step = session.loginStep {
-                            loginGuide(step)
+                        if !world.isDemo, !session.isConnected, !session.isConnecting,
+                           (session.canReconnect || session.reconnectIn != nil) {
+                            reconnectBanner
                         }
                         commandBar
                     }
@@ -220,7 +221,7 @@ struct ContentView: View {
                 }.buttonStyle(.plain).foregroundStyle(Palette.muted)
             } else {
                 Button(action: connectionAction) {
-                    Label(session.reconnectIn != nil ? "Cancel retry" : (session.isConnecting ? "Cancel" : (session.isConnected ? "Disconnect" : "Connect")), systemImage: session.canCancelConnection ? "stop.circle" : "bolt")
+                    Label(connectionButtonTitle, systemImage: connectionButtonIcon)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Palette.jade).padding(.horizontal, 14).padding(.vertical, 9)
                         .background(Palette.jade.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 7))
@@ -314,7 +315,8 @@ struct ContentView: View {
             HStack(spacing: 10) {
                 Text("›").font(.system(size: 24, weight: .light, design: .monospaced)).foregroundStyle(Palette.jade)
                 CommandInput(text: $command, history: history, completions: completionWords,
-                             secret: session.isPasswordInput && !world.isDemo, enabled: canSend,
+                             secret: session.isPasswordInput && !world.isDemo,
+                             enabled: canSend,
                              focusRequest: focusRequest, onSubmit: submit)
                     .frame(height: 22)
                 Button { submit(command) } label: {
@@ -363,34 +365,29 @@ struct ContentView: View {
         .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 18)
     }
 
-    private func loginGuide(_ step: LoginStep) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: session.isPasswordInput ? "lock.fill" : "person.text.rectangle")
-                .font(.system(size: 14)).foregroundStyle(session.isPasswordInput ? Palette.gold : Palette.jade)
-                .frame(width: 22, height: 22)
+    private var reconnectBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 15)).foregroundStyle(Palette.gold).frame(width: 22)
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 7) {
-                    Text("LOGIN GUIDE").font(.system(size: 9, weight: .semibold)).tracking(0.8)
-                        .foregroundStyle(Palette.muted)
-                    Text(step.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.ink)
-                }
-                Text(step.guidance).font(.system(size: 11)).foregroundStyle(Palette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text("Connection interrupted")
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.ink)
+                Text(session.reconnectIn.map { "Retrying in \($0)s. Your game may ask you to sign in again." } ?? session.status)
+                    .font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(2)
             }
             Spacer(minLength: 0)
-            if session.isPasswordInput {
-                Text("NOT SAVED").font(.system(size: 9, weight: .medium)).tracking(0.5)
-                    .foregroundStyle(Palette.gold).padding(.top, 2)
-            }
+            Button("Reconnect now") { session.reconnectNow(); focusRequest += 1 }
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.canvas)
+                .padding(.horizontal, 11).padding(.vertical, 7)
+                .background(Palette.jade).clipShape(RoundedRectangle(cornerRadius: 6))
+                .buttonStyle(.plain)
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.raised.opacity(0.78))
+        .background(Palette.gold.opacity(0.07))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.border))
-        .padding(.horizontal, 24).padding(.top, 4)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Login guide. \(step.title). \(step.guidance)")
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.gold.opacity(0.2)))
+        .padding(.horizontal, 24).padding(.top, 8)
+        .accessibilityElement(children: .contain)
     }
 
     private var statusBar: some View {
@@ -410,6 +407,15 @@ struct ContentView: View {
     }
 
     private var canSend: Bool { world.isDemo || session.isConnected }
+    private var connectionButtonTitle: String {
+        if session.reconnectIn != nil { return "Cancel retry" }
+        if session.isConnecting { return "Cancel" }
+        if session.isConnected { return "Disconnect" }
+        return session.canReconnect ? "Reconnect" : "Connect"
+    }
+    private var connectionButtonIcon: String {
+        session.canCancelConnection ? "stop.circle" : (session.canReconnect ? "arrow.clockwise" : "bolt")
+    }
     private var canPlay: Bool {
         canSend && !session.isPasswordInput && (world.isDemo || !session.gmcpAvailable || session.character.updated != nil)
     }
@@ -434,6 +440,8 @@ struct ContentView: View {
     private func connectionAction() {
         if session.canCancelConnection {
             session.disconnect()
+        } else if session.canReconnect {
+            session.reconnectNow()
         } else if let port = UInt16(world.port) {
             followingOutput = true; pendingOutput = 0
             session.connect(host: world.host, port: port)
