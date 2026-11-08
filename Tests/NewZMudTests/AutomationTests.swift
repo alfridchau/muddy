@@ -51,15 +51,17 @@ final class AutomationTests: XCTestCase {
     }
     func testGenericGMCPVitalsAndRoomExits() throws {
         var character = CharacterState()
-        character.receive(try XCTUnwrap(GMCPMessage(#"Char.Vitals {"hp":820,"max_hp":1000,"jing":240,"max_jing":300,"jingli":180,"max_jingli":300,"neili":360,"max_neili":500,"exp":12450}"#)))
-        character.receive(try XCTUnwrap(GMCPMessage(#"Room.Info {"name":"扬州广场","area":"city","exits":["north","east"]}"#)))
+        character.receive(try XCTUnwrap(GMCPMessage(#"Char.Vitals {"hp":820,"max_hp":1000,"jing":240,"max_jing":300,"jingli":180,"max_jingli":300,"neili":360,"max_neili":500,"exp":12450,"pot":8240}"#)))
+        character.receive(try XCTUnwrap(GMCPMessage(#"Room.Info {"name":"扬州广场","area":"city","exits":["north","east"],"hash":"room-hash"}"#)))
         let vitals = Dictionary(uniqueKeysWithValues: character.vitals.map { ($0.id, $0) })
         XCTAssertEqual(vitals["hp"]?.fraction ?? 0, 0.82, accuracy: 0.001)
         XCTAssertEqual(vitals["neili"]?.current, 360)
         XCTAssertEqual(vitals["jing"]?.current, 240)
         XCTAssertEqual(vitals["jingli"]?.name, "Jingli")
         XCTAssertEqual(character.experience, 12450)
+        XCTAssertEqual(character.potential, 8240)
         XCTAssertEqual(character.room, "扬州广场")
+        XCTAssertEqual(character.roomID, "room-hash")
         XCTAssertEqual(character.exits, ["north", "east"])
     }
 }

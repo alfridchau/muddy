@@ -63,45 +63,12 @@ struct CharacterPanel: View {
                         Text(isDemo ? "12,450" : (character.experience?.formatted() ?? "—")).monospacedDigit()
                     }.font(.system(size: 11))
                 }
-                Rectangle().fill(Palette.border).frame(height: 1)
-                VStack(alignment: .leading, spacing: 16) {
+                if isDemo || character.potential != nil {
                     HStack {
-                        SectionLabel(title: "Navigation")
+                        Text("Potential").foregroundStyle(Palette.muted)
                         Spacer()
-                        Image(systemName: "location.north").font(.system(size: 11)).foregroundStyle(Palette.muted)
-                    }
-                    if !isDemo, let room = character.room {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(room).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.gold)
-                            if let area = character.area { Text(area).font(.caption).foregroundStyle(Palette.muted) }
-                        }
-                    }
-                    VStack(spacing: 5) {
-                        HStack(spacing: 5) {
-                            direction("NW", command: "nw")
-                            direction("N", command: "north")
-                            direction("NE", command: "ne")
-                        }
-                        HStack(spacing: 5) {
-                            direction("W", command: "west")
-                            Button { send("look") } label: {
-                                Image(systemName: "location.circle")
-                                    .font(.system(size: 20, weight: .light)).foregroundStyle(Palette.jade)
-                                    .frame(width: 51, height: 42)
-                                    .background(Palette.jade.opacity(0.08))
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                            }
-                            .buttonStyle(.plain).disabled(!canSend).help("Look around")
-                            direction("E", command: "east")
-                        }
-                        HStack(spacing: 5) {
-                            direction("SW", command: "sw")
-                            direction("S", command: "south")
-                            direction("SE", command: "se")
-                        }
-                    }.frame(maxWidth: .infinity)
-                    Text(!isDemo && character.hasRoom ? "Available exits are highlighted." : "Click a direction to walk.")
-                        .font(.system(size: 10)).foregroundStyle(Palette.muted).frame(maxWidth: .infinity)
+                        Text(isDemo ? "8,240" : (character.potential?.formatted() ?? "—")).monospacedDigit()
+                    }.font(.system(size: 11))
                 }
                 Rectangle().fill(Palette.border).frame(height: 1)
                 VStack(alignment: .leading, spacing: 13) {
@@ -144,17 +111,6 @@ struct CharacterPanel: View {
         }
     }
 
-    private func direction(_ label: String, command: String) -> some View {
-        let available = isDemo || !character.hasRoom || character.exits.contains(command) || character.exits.contains(label.lowercased())
-        return Button { send(command) } label: {
-            Text(label).font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(available && !isDemo && character.hasRoom ? Palette.jade : Palette.muted).frame(width: 51, height: 42)
-                .background(Palette.raised.opacity(0.7))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain).disabled(!canSend || !available).help("Walk \(command)")
-    }
-
     private func shortcut(_ title: String, command: String, symbol: String) -> some View {
         Button { send(command) } label: {
             HStack(spacing: 9) {
@@ -164,5 +120,84 @@ struct CharacterPanel: View {
                 Text(command).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.muted)
             }.contentShape(Rectangle())
         }.buttonStyle(.plain).disabled(!canSend)
+    }
+}
+
+struct NavigationOverlay: View {
+    var isDemo: Bool
+    var canSend: Bool
+    var character: CharacterState
+    var send: (String) -> Void
+
+    private var exitsSummary: String {
+        let exits = character.exits.sorted().joined(separator: ", ")
+        return exits.isEmpty ? "none reported" : exits
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "location.north.fill").font(.system(size: 10)).foregroundStyle(Palette.jade)
+                Text("Navigation").font(.system(size: 11, weight: .semibold))
+                Spacer()
+                if isDemo { Text("SAMPLE").font(.system(size: 8, weight: .semibold)).tracking(0.8).foregroundStyle(Palette.muted) }
+            }
+            if !isDemo && (character.room != nil || character.area != nil || character.roomID != nil || character.hasRoom) {
+                VStack(alignment: .leading, spacing: 3) {
+                    if let room = character.room {
+                        Text(room).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.gold).lineLimit(1)
+                    }
+                    if let area = character.area { Text(area).font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(1) }
+                    if let roomID = character.roomID {
+                        Text("ID · \(roomID)").font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(Palette.muted).textSelection(.enabled).lineLimit(1)
+                    }
+                    if character.hasRoom {
+                        Text("Exits · \(exitsSummary)").font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(2)
+                    }
+                }
+            }
+            VStack(spacing: 4) {
+                HStack(spacing: 4) {
+                    direction("NW", command: "nw")
+                    direction("N", command: "north")
+                    direction("NE", command: "ne")
+                }
+                HStack(spacing: 4) {
+                    direction("W", command: "west")
+                    Button { send("look") } label: {
+                        Image(systemName: "location.circle")
+                            .font(.system(size: 15, weight: .light)).foregroundStyle(Palette.jade)
+                            .frame(width: 36, height: 30)
+                            .background(Palette.jade.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
+                    .buttonStyle(.plain).disabled(!canSend).help("Look around")
+                    direction("E", command: "east")
+                }
+                HStack(spacing: 4) {
+                    direction("SW", command: "sw")
+                    direction("S", command: "south")
+                    direction("SE", command: "se")
+                }
+            }.frame(maxWidth: .infinity)
+        }
+        .padding(12)
+        .frame(width: 172)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(Palette.border.opacity(0.9), lineWidth: 1))
+        .shadow(color: .black.opacity(0.22), radius: 12, y: 5)
+    }
+
+    private func direction(_ label: String, command: String) -> some View {
+        let available = isDemo || !character.hasRoom || character.exits.contains(command) || character.exits.contains(label.lowercased())
+        return Button { send(command) } label: {
+            Text(label).font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(available && !isDemo && character.hasRoom ? Palette.jade : Palette.muted)
+                .frame(width: 36, height: 30)
+                .background(Palette.raised.opacity(0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain).disabled(!canSend || !available).help("Walk \(command)")
     }
 }

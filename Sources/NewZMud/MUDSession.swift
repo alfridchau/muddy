@@ -26,6 +26,7 @@ final class MUDSession: ObservableObject {
     private var stableConnectionTask: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
     private var vitalsTask: Task<Void, Never>?
+    private var roomInfoRequested = false
     private var commandTask: Task<Void, Never>?
     private var commandGeneration = UUID()
     private var timerTasks: [UUID: Task<Void, Never>] = [:]
@@ -118,6 +119,7 @@ final class MUDSession: ObservableObject {
         connection?.cancel(); connection = nil
         isConnected = false; isConnecting = false; isPasswordInput = false
         gmcpAvailable = false
+        roomInfoRequested = false
         stream = TelnetStream()
         _ = stream.resize(columns: terminalColumns, rows: terminalRows)
     }
@@ -299,6 +301,10 @@ final class MUDSession: ObservableObject {
 
     private func receiveGMCP(_ message: GMCPMessage) {
         character.receive(message)
+        if !roomInfoRequested, character.hasCharacterInfo, gmcpAvailable {
+            roomInfoRequested = true
+            write(TelnetStream.gmcp("Room.Info.Get"))
+        }
         if message.module == "Room.Info" || message.module == "Char.Vitals" {
             startVitalsPolling()
         }

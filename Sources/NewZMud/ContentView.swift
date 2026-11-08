@@ -66,7 +66,7 @@ struct ContentView: View {
                         }
                         commandBar
                     }
-                    if showInspector {
+                    if showInspector && (world.isDemo || (session.isConnected && session.character.hasCharacterInfo)) {
                         Rectangle().fill(Palette.border).frame(width: 1)
                         CharacterPanel(isDemo: world.isDemo, canSend: canPlay, character: session.character, gmcpAvailable: session.gmcpAvailable, isConnected: session.isConnected, send: submit)
                             .frame(width: 246)
@@ -309,6 +309,13 @@ struct ContentView: View {
                         .padding(.horizontal, 13).padding(.vertical, 8)
                         .background(Palette.jade).clipShape(Capsule())
                 }.buttonStyle(.plain).padding(18)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if world.isDemo || (session.isConnected && session.character.hasRoom) {
+                NavigationOverlay(isDemo: world.isDemo, canSend: canPlay,
+                                  character: session.character, send: submit)
+                    .padding(16)
             }
         }
     }

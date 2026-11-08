@@ -37,11 +37,16 @@ struct CharacterState {
     var title: String?
     var vitals: [CharacterVital] = []
     var experience: Int?
+    var potential: Int?
     var room: String?
     var area: String?
+    var roomID: String?
     var exits: Set<String> = []
     var hasRoom = false
     var updated: Date?
+    var hasCharacterInfo: Bool {
+        name != nil || title != nil || !vitals.isEmpty || experience != nil || potential != nil
+    }
 
     mutating func receive(_ message: GMCPMessage) {
         guard let data = message.object else { return }
@@ -58,6 +63,7 @@ struct CharacterState {
             guard decoded.contains(where: { ($0.current ?? 0) > 0 || ($0.maximum ?? 0) > 0 }) else { return }
             vitals = decoded
             experience = number(["exp", "experience", "combat_exp"]) ?? experience
+            potential = number(["pot", "potential"]) ?? potential
         case "char.status", "char.name":
             name = data["name"] as? String ?? name
             title = data["title"] as? String ?? data["class"] as? String ?? title
@@ -65,6 +71,8 @@ struct CharacterState {
         case "room.info":
             room = data["name"] as? String ?? room
             area = data["area"] as? String ?? area
+            roomID = data["hash"] as? String ?? roomID
+            hasRoom = true
             if let names = data["exits"] as? [String] { exits = Set(names.map { $0.lowercased() }); hasRoom = true }
             if let mapping = data["exits"] as? [String: Any] { exits = Set(mapping.keys.map { $0.lowercased() }); hasRoom = true }
         default: return
