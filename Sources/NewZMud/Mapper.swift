@@ -29,13 +29,13 @@ final class MapperStore: ObservableObject {
     @Published private(set) var map = WorldMap()
     @Published private(set) var selectedWorldID: UUID?
     private var previousRoomID: String?
-    private var pendingDirection: String?
+    private var pendingDirections: [String] = []
 
     func load(worldID: UUID) {
         guard selectedWorldID != worldID else { return }
         selectedWorldID = worldID
         previousRoomID = nil
-        pendingDirection = nil
+        pendingDirections = []
         let data = UserDefaults.standard.data(forKey: storageKey(worldID))
         map = data.flatMap { try? JSONDecoder().decode(WorldMap.self, from: $0) } ?? WorldMap()
     }
@@ -46,11 +46,15 @@ final class MapperStore: ObservableObject {
         for exit in exits {
             let mapped = rules.first { $0.exit.caseInsensitiveCompare(exit) == .orderedSame }?.command
             if value == exit.lowercased() || mapped?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == value {
-                pendingDirection = canonicalDirection(exit)
+                pendingDirections.append(canonicalDirection(exit))
                 return
             }
         }
-        pendingDirection = nil
+        pendingDirections.removeAll()
+    }
+
+    func noteRoute(_ directions: [String]) {
+        pendingDirections.append(contentsOf: directions.map(canonicalDirection))
     }
 
     func receive(_ character: CharacterState) {
@@ -62,19 +66,43 @@ final class MapperStore: ObservableObject {
             map.rooms[index].roomID = character.roomID
             map.rooms[index].exits = character.exits.sorted()
         } else {
-            let position = newPosition(from: previousRoomID, direction: pendingDirection)
+            let position = newPosition(from: previousRoomID, direction: pendingDirections.first)
             map.rooms.append(MappedRoom(id: roomID, name: name, area: character.area,
                                         roomID: character.roomID, exits: character.exits.sorted(),
                                         x: position.x, y: position.y))
         }
         let changedRoom = previousRoomID != nil && previousRoomID != roomID
-        if changedRoom, let previousRoomID, let direction = pendingDirection {
+        if changedRoom, let previousRoomID, let direction = pendingDirections.first {
             addConnection(from: previousRoomID, to: roomID, direction: direction)
+            pendingDirections.removeFirst()
         }
         previousRoomID = roomID
-        if changedRoom { pendingDirection = nil }
         map.currentRoomID = roomID
         persist()
+    }
+
+    func moveRoom(_ id: String, by delta: (x: Int, y: Int)) {
+        guard let index = map.rooms.firstIndex(where: { $0.id == id }) else { return }
+        let x = map.rooms[index].x + delta.x
+        let y = map.rooms[index].y + delta.y
+        guard !map.rooms.contains(where: { $0.id != id && $0.x == x && $0.y == y }) else { return }
+        map.rooms[index].x = x
+        map.rooms[index].y = y
+        persist()
+    }
+
+    func route(to destination: String) -> [MappedConnection]? {
+        guard let origin = map.currentRoomID, origin != destination else { return nil }
+        var queue: [(room: String, path: [MappedConnection])] = [(origin, [])]
+        var visited: Set<String> = [origin]
+        while !queue.isEmpty {
+            let next = queue.removeFirst()
+            for edge in map.connections where edge.from == next.room {
+                if edge.to == destination { return next.path + [edge] }
+                if visited.insert(edge.to).inserted { queue.append((edge.to, next.path + [edge])) }
+            }
+        }
+        return nil
     }
 
     private func newPosition(from previous: String?, direction: String?) -> (x: Int, y: Int) {
@@ -134,7 +162,10 @@ final class MapperStore: ObservableObject {
 
 struct MapperView: View {
     @ObservedObject var store: MapperStore
+    @Binding var zoom: Double
+    var move: (MappedRoom) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedRoomID: String?
 
     private let cellWidth: CGFloat = 230
     private let cellHeight: CGFloat = 150
@@ -152,14 +183,23 @@ struct MapperView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("World map").font(.system(size: 18, weight: .semibold))
-                    Text("\(store.map.roomCount) rooms discovered · map fills in as you explore")
+                    Text("\(store.map.roomCount) rooms · drag rooms to arrange · scroll to pan")
                         .font(.system(size: 11)).foregroundStyle(Palette.muted)
                 }
                 Spacer()
+                Button { setZoom(zoom - 0.1) } label: { Image(systemName: "minus.magnifyingglass") }
+                    .buttonStyle(.borderless).disabled(zoom <= 0.5)
+                Text("\(Int(zoom * 100))%").font(.system(size: 10, design: .monospaced)).frame(width: 38)
+                Button { setZoom(zoom + 0.1) } label: { Image(systemName: "plus.magnifyingglass") }
+                    .buttonStyle(.borderless).disabled(zoom >= 1.8)
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
             .padding(18)
             Rectangle().fill(Palette.border).frame(height: 1)
+            if let selected = selectedRoom {
+                selectedRoomDetail(selected)
+                Rectangle().fill(Palette.border).frame(height: 1)
+            }
             if store.map.rooms.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "map").font(.system(size: 28)).foregroundStyle(Palette.muted)
@@ -171,7 +211,12 @@ struct MapperView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView([.horizontal, .vertical]) {
-                    mapCanvas.padding(44)
+                    mapCanvas
+                        .scaleEffect(zoom, anchor: .topLeading)
+                        .frame(width: max(cellWidth, CGFloat(bounds.maxX - bounds.minX + 1) * cellWidth) * zoom,
+                               height: max(cellHeight, CGFloat(bounds.maxY - bounds.minY + 1) * cellHeight) * zoom,
+                               alignment: .topLeading)
+                        .padding(44 * zoom)
                 }
                 .background(Palette.canvas)
             }
@@ -180,6 +225,40 @@ struct MapperView: View {
         .background(Palette.panel)
         .foregroundStyle(Palette.ink)
         .preferredColorScheme(.dark)
+    }
+
+    private var selectedRoom: MappedRoom? {
+        let id = selectedRoomID ?? store.map.currentRoomID
+        return store.map.rooms.first { $0.id == id }
+    }
+
+    private func setZoom(_ value: Double) { zoom = min(1.8, max(0.5, value)) }
+
+    private func selectedRoomDetail(_ room: MappedRoom) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(room.name).font(.system(size: 13, weight: .semibold))
+                    if room.id == store.map.currentRoomID {
+                        Text("CURRENT").font(.system(size: 8, weight: .bold)).tracking(0.7).foregroundStyle(Palette.jade)
+                    }
+                }
+                Text("Area: \(room.area ?? "Unknown")  ·  Room ID: \(room.roomID ?? "Unavailable")")
+                    .font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.muted).lineLimit(1)
+                Text("Exits: \(room.exits.sorted().joined(separator: ", ").isEmpty ? "Unknown" : room.exits.sorted().joined(separator: ", "))")
+                    .font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(2)
+            }
+            Spacer()
+            if let route = store.route(to: room.id), !route.isEmpty {
+                Button { move(room) } label: {
+                    Label("Move here · \(route.count)", systemImage: "figure.walk")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .buttonStyle(.borderedProminent).tint(Palette.jade).foregroundStyle(Palette.canvas)
+            }
+        }
+        .padding(.horizontal, 18).padding(.vertical, 10)
+        .background(Palette.panel)
     }
 
     private var mapCanvas: some View {
@@ -210,6 +289,12 @@ struct MapperView: View {
             ForEach(store.map.rooms) { room in
                 roomCard(room)
                     .position(point(for: room))
+                    .simultaneousGesture(DragGesture(minimumDistance: 5)
+                        .onEnded { value in
+                            let dx = Int((value.translation.width / zoom / cellWidth).rounded())
+                            let dy = Int((value.translation.height / zoom / cellHeight).rounded())
+                            if dx != 0 || dy != 0 { store.moveRoom(room.id, by: (dx, dy)) }
+                        })
             }
         }
         .frame(width: max(cellWidth, width), height: max(cellHeight, height))
@@ -222,20 +307,34 @@ struct MapperView: View {
 
     private func roomCard(_ room: MappedRoom) -> some View {
         let current = room.id == store.map.currentRoomID
-        return VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 5) {
-                if current { Image(systemName: "location.fill").foregroundStyle(Palette.jade) }
-                Text(room.name).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+        let selected = room.id == selectedRoomID || (selectedRoomID == nil && current)
+        let canMove = store.route(to: room.id)?.isEmpty == false
+        return HStack(spacing: 4) {
+            Button { selectedRoomID = room.id } label: {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 5) {
+                        if current { Image(systemName: "location.fill").foregroundStyle(Palette.jade) }
+                        Text(room.name).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                    }
+                    if let area = room.area {
+                        Text(area).font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(1)
+                    }
+                    Text(room.exits.isEmpty ? "Exits unknown" : "Exits: \(room.exits.sorted().joined(separator: ", "))")
+                        .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
-            if let area = room.area {
-                Text(area).font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(1)
+            .buttonStyle(.plain)
+            if canMove {
+                Button { move(room) } label: {
+                    Image(systemName: "arrow.right.circle.fill").font(.system(size: 16)).foregroundStyle(Palette.jade)
+                }
+                .buttonStyle(.plain).help("Move to \(room.name)")
             }
-            Text(room.exits.isEmpty ? "Exits unknown" : "Exits: \(room.exits.sorted().joined(separator: ", "))")
-                .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).lineLimit(2)
         }
         .padding(9).frame(width: roomCardWidth, height: roomCardHeight, alignment: .leading)
         .background(current ? Palette.jade.opacity(0.13) : Palette.raised,
                     in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(current ? Palette.jade.opacity(0.65) : Palette.border, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Palette.jade.opacity(0.8) : Palette.border, lineWidth: 1))
     }
 }

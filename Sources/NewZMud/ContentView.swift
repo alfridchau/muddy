@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var showSearch = false
     @State private var showGMCPDiagnostics = false
     @State private var showMapper = false
+    @State private var mapZoom = 1.0
     @State private var demoLines = DemoWorld.introduction
     @State private var focusRequest = 0
     @State private var showAutomation = false
@@ -110,7 +111,7 @@ struct ContentView: View {
             GMCPDiagnosticsView(session: session, automation: automation)
         }
         .sheet(isPresented: $showMapper) {
-            MapperView(store: mapper)
+            MapperView(store: mapper, zoom: $mapZoom, move: moveToMappedRoom)
         }
         .background {
             ShortcutMonitor(rules: automation.configuration.keys,
@@ -530,6 +531,39 @@ struct ContentView: View {
 
     private func submit(_ text: String) {
         submit(text, focusInput: true)
+    }
+
+    private func moveToMappedRoom(_ room: MappedRoom) {
+        guard canPlay, !world.isDemo, let route = mapper.route(to: room.id), !route.isEmpty else { return }
+        let commands = route.compactMap { edge -> (direction: String, command: String)? in
+            guard let source = mapper.map.rooms.first(where: { $0.id == edge.from }),
+                  let exit = source.exits.first(where: { canonicalDirection($0) == edge.direction }) else { return nil }
+            let command = automation.configuration.exitCommands.first {
+                $0.exit.caseInsensitiveCompare(exit) == .orderedSame
+            }?.command ?? exit
+            return (edge.direction, command)
+        }
+        guard commands.count == route.count else { return }
+        mapper.noteRoute(commands.map(\.direction))
+        for item in commands {
+            history.append(item.command)
+            session.send(item.command)
+        }
+        if history.count > 100 { history.removeFirst(history.count - 100) }
+    }
+
+    private func canonicalDirection(_ exit: String) -> String {
+        switch exit.lowercased() {
+        case "n", "north": "north"
+        case "ne", "northeast", "north-east": "northeast"
+        case "e", "east": "east"
+        case "se", "southeast", "south-east": "southeast"
+        case "s", "south": "south"
+        case "sw", "southwest", "south-west": "southwest"
+        case "w", "west": "west"
+        case "nw", "northwest", "north-west": "northwest"
+        default: exit.lowercased()
+        }
     }
 
     private func navigate(_ direction: String) -> Bool {
