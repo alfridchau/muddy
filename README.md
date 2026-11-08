@@ -21,6 +21,8 @@ With the game in the sibling `../mud` folder and FluffOS built at `../mud/fluffo
 
 Add a world with host `127.0.0.1` and port `6666` (UTF-8), select it, and click Connect. Follow the prompts shown by the game in the terminal. Password input uses a secure field when the server requests no echo; password replies are excluded from command history, terminal output, and automation, and are never saved. Empty Enter is supported for prompts.
 
+Each world profile keeps its own connection and terminal transcript. Switching worlds leaves the previous session connected in the background; returning to that profile restores its session. Closing the app disconnects all worlds.
+
 The server also offers GBK Telnet on `5566` and a browser client at `http://127.0.0.1:8888/`. NewZMud currently uses UTF-8, so use `6666`. The browser client's address fields must also be set to the local host if you use it.
 
 The launcher creates `data/.env` from the game's example only when missing and writes a loopback-only configuration to the ignored `log/new-zmud.local.ini`. Stop a foreground server with Control-C. Set `MUD_SERVER_DIR` to use another game directory. The optional AI service is separate.

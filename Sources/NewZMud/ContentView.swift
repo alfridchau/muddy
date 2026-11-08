@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var library = WorldLibrary()
-    @StateObject private var session = MUDSession()
+    @StateObject private var worldSessions = WorldSessions()
     @StateObject private var automation = AutomationStore()
     @AppStorage("selectedWorldID") private var selectionID = World.demo.id.uuidString
     @State private var editingWorld: World?
@@ -23,6 +23,7 @@ struct ContentView: View {
 
     private var selection: UUID { UUID(uuidString: selectionID) ?? World.demo.id }
     private var world: World { library.worlds.first { $0.id == selection } ?? .demo }
+    private var session: MUDSession { worldSessions.session(for: selection) }
     private var displayBuffer: TerminalBuffer {
         guard world.isDemo else { return session.terminal }
         var buffer = TerminalBuffer()
@@ -79,7 +80,7 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .sheet(item: $editingWorld) { item in
             WorldEditor(world: item) { saved in
-                if saved.id == selection { session.reset() }
+                worldSessions.reset(saved.id)
                 library.save(saved)
                 select(saved)
             }
@@ -100,11 +101,12 @@ struct ContentView: View {
         }
         .onAppear {
             automation.load(world.id)
+            worldSessions.activate(world.id)
             session.configure(automation.configuration)
             session.resize(columns: terminalColumns, rows: terminalRows)
         }
         .onChange(of: automation.configuration) { session.configure($0) }
-        .onDisappear { session.disconnect(announce: false) }
+        .onDisappear { worldSessions.disconnectAll() }
         .onChange(of: session.isConnected) { connected in
             if connected { DispatchQueue.main.async { focusRequest += 1 } }
         }
@@ -167,6 +169,7 @@ struct ContentView: View {
                             .disabled(item.id == selection && session.canCancelConnection)
                         Button("Remove world", role: .destructive) {
                             if selection == item.id { select(.demo) }
+                            worldSessions.remove(item.id)
                             library.worlds.removeAll { $0.id == item.id }
                         }
                     }
@@ -426,8 +429,8 @@ struct ContentView: View {
 
     private func select(_ item: World) {
         guard selection != item.id else { return }
-        session.reset()
         selectionID = item.id.uuidString
+        worldSessions.activate(item.id)
         automation.load(item.id)
         session.configure(automation.configuration)
         session.resize(columns: terminalColumns, rows: terminalRows)
