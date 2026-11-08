@@ -4,6 +4,7 @@ struct ContentView: View {
     @StateObject private var library = WorldLibrary()
     @StateObject private var worldSessions = WorldSessions()
     @StateObject private var automation = AutomationStore()
+    @StateObject private var mapper = MapperStore()
     @AppStorage("selectedWorldID") private var selectionID = World.demo.id.uuidString
     @State private var editingWorld: World?
     @State private var showInspector = true
@@ -13,6 +14,7 @@ struct ContentView: View {
     @State private var search = ""
     @State private var showSearch = false
     @State private var showGMCPDiagnostics = false
+    @State private var showMapper = false
     @State private var demoLines = DemoWorld.introduction
     @State private var focusRequest = 0
     @State private var showAutomation = false
@@ -107,6 +109,9 @@ struct ContentView: View {
         .sheet(isPresented: $showGMCPDiagnostics) {
             GMCPDiagnosticsView(session: session, automation: automation)
         }
+        .sheet(isPresented: $showMapper) {
+            MapperView(store: mapper)
+        }
         .background {
             ShortcutMonitor(rules: automation.configuration.keys,
                             enabled: canSend && !session.isPasswordInput && !showAutomation && editingWorld == nil,
@@ -120,10 +125,14 @@ struct ContentView: View {
         }
         .onAppear {
             automation.load(world.id)
+            mapper.load(worldID: world.id)
+            mapper.receive(session.character)
             worldSessions.activate(world.id)
             session.configure(automation.configuration)
             session.resize(columns: terminalColumns, rows: terminalRows)
         }
+        .onReceive(session.$character) { character in mapper.receive(character) }
+        .onChange(of: selectionID) { _ in mapper.load(worldID: selection) }
         .onChange(of: automation.configuration) { session.configure($0) }
         .onDisappear { worldSessions.disconnectAll() }
         .onChange(of: session.isConnected) { connected in
@@ -264,6 +273,11 @@ struct ContentView: View {
             Image(systemName: "terminal").font(.system(size: 12)).foregroundStyle(Palette.jade)
             Text("Game").font(.system(size: 12, weight: .medium))
             Spacer()
+            Button { showMapper = true } label: {
+                Label("Map", systemImage: "map")
+                    .font(.system(size: 11)).foregroundStyle(Palette.muted)
+            }
+            .buttonStyle(.plain).help("Open discovered world map")
             if world.isDemo {
                 Text("LOCAL PREVIEW · NO SERVER CONNECTION")
                     .font(.system(size: 9, weight: .medium)).tracking(0.8).foregroundStyle(Palette.muted)
@@ -557,6 +571,7 @@ struct ContentView: View {
             } catch { demoLines.append(.init(text: error.localizedDescription, kind: .note)) }
             if demoLines.count > 1000 { demoLines.removeFirst(demoLines.count - 1000) }
         } else {
+            mapper.noteCommand(text, exits: session.character.exits, rules: automation.configuration.exitCommands)
             session.send(text)
         }
         command = ""

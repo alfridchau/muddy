@@ -40,6 +40,8 @@ The launcher creates `data/.env` from the game's example only when missing and w
 
 GMCP negotiation advertises NewZMud and its supported modules. The character panel renders numeric `Char.Vitals` fields as data-driven rows, pairing each field with a matching `max_`/`max` field when provided. Labels come from the server's field names; no game-specific stat aliases are assumed. `Char.Status`/`Char.Name` and `Room.Info` populate optional character and room details. When available, room exits are highlighted and unavailable directions are disabled.
 
+The **Map** button opens a per-world map discovered during play. It records rooms from `Room.Info`, links them when a movement command is followed by a room update, and marks the current room. A server-provided room hash is used as the room identity; otherwise area and room name are combined. Map layout uses movement directions as approximate coordinates. The map is saved locally and can be cleared from its window.
+
 Once GMCP is negotiated, the client requests `Char.Vitals.Get` immediately and then every three seconds while connected. Empty pre-login replies are ignored. Name/title only appear if the server sends them. Remote GUI/map download requests are not executed.
 
 Open the GMCP/Telnet indicator in the status bar for local diagnostics: negotiation state, advertised/reported modules, received message counts, timestamps, and top-level field names/types. Payload values are not retained or shown. **Configure stats…** uses discovered `Char.Vitals` fields to set per-world labels, visibility, and order.
@@ -76,4 +78,4 @@ swift test
 
 Tests cover packet boundaries, Telnet/GMCP framing, ANSI state, wide glyphs, cursor edits, aliases, triggers, paths, history/completion, and live loopback connections with a temporary test server. Network checks verify GMCP updates, timer/trigger actions, stopping on password mode, and reconnecting without replay; they do not create game accounts or access model services.
 
-This is a practical ANSI terminal subset, not a complete xterm/VT emulator. Input uses submitted command lines. Legacy Chinese encodings, MCCP compression, sound, automatic mapping, and zMUD script import remain unimplemented. Unsupported Telnet options are refused. The local app bundle is for development; distribution signing and notarization are not configured.
+This is a practical ANSI terminal subset, not a complete xterm/VT emulator. Input uses submitted command lines. Legacy Chinese encodings, MCCP compression, sound, manually editing map rooms, and zMUD script import remain unimplemented. Map discovery depends on the MUD providing GMCP room updates after movement. Unsupported Telnet options are refused. The local app bundle is for development; distribution signing and notarization are not configured.
