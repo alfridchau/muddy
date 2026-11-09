@@ -150,19 +150,12 @@ struct CharacterPanel: View {
 
 struct NavigationOverlay: View {
     @State private var roomIDCopied = false
-    @State private var dragStart: CGSize?
-    @State private var offsetX = 0.0
-    @State private var offsetY = 0.0
-    var worldID: UUID
     var isDemo: Bool
     var canSend: Bool
     var character: CharacterState
     var exitCommands: [ExitCommandRule]
     var send: (String) -> Void
     var move: (String) -> Void
-
-    private var offsetXKey: String { "navigationOffsetX.\(worldID.uuidString)" }
-    private var offsetYKey: String { "navigationOffsetY.\(worldID.uuidString)" }
 
     private var displayedExits: [(name: String, command: String)] {
         let mappings = Dictionary(exitCommands.map { ($0.exit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), $0.command) }, uniquingKeysWith: { _, latest in latest })
@@ -193,31 +186,8 @@ struct NavigationOverlay: View {
                 Image(systemName: "location.north.fill").font(.system(size: 10)).foregroundStyle(Palette.jade)
                 Text("Navigation").font(.system(size: 11, weight: .semibold))
                 Spacer(minLength: 4)
-                Button {
-                    offsetX = 0; offsetY = 0
-                    UserDefaults.standard.removeObject(forKey: offsetXKey)
-                    UserDefaults.standard.removeObject(forKey: offsetYKey)
-                } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 9, weight: .medium)).foregroundStyle(Palette.muted)
-                }
-                .buttonStyle(.plain).help("Reset navigation position")
                 if isDemo { Text("SAMPLE").font(.system(size: 8, weight: .semibold)).tracking(0.8).foregroundStyle(Palette.muted) }
             }
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 3)
-                .onChanged { value in
-                    let start = dragStart ?? CGSize(width: offsetX, height: offsetY)
-                    dragStart = start
-                    offsetX = start.width + value.translation.width
-                    offsetY = start.height + value.translation.height
-                }
-                .onEnded { _ in
-                    dragStart = nil
-                    UserDefaults.standard.set(offsetX, forKey: offsetXKey)
-                    UserDefaults.standard.set(offsetY, forKey: offsetYKey)
-                })
-            .help("Drag to move navigation")
                 if !isDemo && (character.room != nil || character.area != nil || character.roomID != nil || character.hasRoom) {
                     VStack(alignment: .leading, spacing: 4) {
                         if let room = character.room {
@@ -272,11 +242,6 @@ struct NavigationOverlay: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(Palette.border.opacity(0.9), lineWidth: 1))
         .shadow(color: .black.opacity(0.22), radius: 12, y: 5)
-        .offset(x: offsetX, y: offsetY)
-        .onAppear {
-            offsetX = UserDefaults.standard.double(forKey: offsetXKey)
-            offsetY = UserDefaults.standard.double(forKey: offsetYKey)
-        }
     }
 
     private func compassRow(_ directions: [String]) -> some View {

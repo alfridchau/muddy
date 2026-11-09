@@ -70,6 +70,12 @@ struct TerminalLine: Identifiable {
     }
 }
 
+struct TerminalBookmark: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var line: String
+    var createdAt = Date()
+}
+
 enum DemoWorld {
     static let introduction: [TerminalLine] = [
         .init(text: "欢迎来到笑傲江湖", kind: .title),

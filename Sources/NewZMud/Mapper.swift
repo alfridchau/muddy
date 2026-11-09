@@ -1,5 +1,21 @@
 import SwiftUI
 
+enum RoomMarker: String, Codable, CaseIterable, Identifiable {
+    case none, landmark, shop, quest, danger, safe
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var symbol: String {
+        switch self {
+        case .none: ""
+        case .landmark: "mappin.and.ellipse"
+        case .shop: "cart"
+        case .quest: "flag"
+        case .danger: "exclamationmark.triangle"
+        case .safe: "checkmark.shield"
+        }
+    }
+}
+
 struct MappedRoom: Codable, Equatable, Identifiable {
     var id: String
     var name: String
@@ -8,6 +24,8 @@ struct MappedRoom: Codable, Equatable, Identifiable {
     var exits: [String]
     var x: Int
     var y: Int
+    var note: String? = nil
+    var marker: RoomMarker? = nil
 }
 
 struct MappedConnection: Codable, Equatable, Identifiable {
@@ -91,6 +109,13 @@ final class MapperStore: ObservableObject {
         persist()
     }
 
+    func updateDetails(_ id: String, note: String, marker: RoomMarker) {
+        guard let index = map.rooms.firstIndex(where: { $0.id == id }) else { return }
+        map.rooms[index].note = note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : note
+        map.rooms[index].marker = marker == .none ? nil : marker
+        persist()
+    }
+
     func route(to destination: String) -> [MappedConnection]? {
         guard let origin = map.currentRoomID, origin != destination else { return nil }
         var queue: [(room: String, path: [MappedConnection])] = [(origin, [])]
@@ -119,11 +144,21 @@ final class MapperStore: ObservableObject {
         case "northwest": delta = (-1, -1)
         default: delta = (1, 0)
         }
-        var candidate = (x: room.x + delta.0, y: room.y + delta.1)
-        while map.rooms.contains(where: { $0.x == candidate.x && $0.y == candidate.y }) {
-            candidate.x += 1
-        }
-        return candidate
+        let target = (x: room.x + delta.0, y: room.y + delta.1)
+        let blocked: (Int, Int) -> Bool = { x, y in self.map.rooms.contains(where: { $0.x == x && $0.y == y }) }
+        guard blocked(target.x, target.y) else { return target }
+        let candidates = (-8...8).flatMap { y in (-8...8).map { x in (x: target.x + x, y: target.y + y) } }
+            .filter { !blocked($0.x, $0.y) }
+            .sorted { lhs, rhs in
+                let leftDistance = abs(lhs.x - target.x) + abs(lhs.y - target.y)
+                let rightDistance = abs(rhs.x - target.x) + abs(rhs.y - target.y)
+                if leftDistance != rightDistance { return leftDistance < rightDistance }
+                let leftProjection = (lhs.x - target.x) * delta.0 + (lhs.y - target.y) * delta.1
+                let rightProjection = (rhs.x - target.x) * delta.0 + (rhs.y - target.y) * delta.1
+                if leftProjection != rightProjection { return leftProjection > rightProjection }
+                return lhs.y == rhs.y ? lhs.x < rhs.x : lhs.y < rhs.y
+            }
+        return candidates.first.map { ($0.x, $0.y) } ?? target
     }
 
     private func addConnection(from: String, to: String, direction: String) {
@@ -168,9 +203,9 @@ struct MapperView: View {
     @State private var selectedRoomID: String?
 
     private let cellWidth: CGFloat = 230
-    private let cellHeight: CGFloat = 150
+    private let cellHeight: CGFloat = 170
     private let roomCardWidth: CGFloat = 206
-    private let roomCardHeight: CGFloat = 84
+    private let roomCardHeight: CGFloat = 104
 
     private var bounds: (minX: Int, maxX: Int, minY: Int, maxY: Int) {
         guard !store.map.rooms.isEmpty else { return (0, 0, 0, 0) }
@@ -235,7 +270,7 @@ struct MapperView: View {
     private func setZoom(_ value: Double) { zoom = min(1.8, max(0.5, value)) }
 
     private func selectedRoomDetail(_ room: MappedRoom) -> some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
                     Text(room.name).font(.system(size: 13, weight: .semibold))
@@ -245,10 +280,22 @@ struct MapperView: View {
                 }
                 Text("Area: \(room.area ?? "Unknown")  ·  Room ID: \(room.roomID ?? "Unavailable")")
                     .font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.muted).lineLimit(1)
-                Text("Exits: \(room.exits.sorted().joined(separator: ", ").isEmpty ? "Unknown" : room.exits.sorted().joined(separator: ", "))")
-                    .font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(2)
+                TextField("Add a room note…", text: Binding(
+                    get: { room.note ?? "" },
+                    set: { store.updateDetails(room.id, note: $0, marker: room.marker ?? .none) }
+                ))
+                .textFieldStyle(.roundedBorder).font(.system(size: 10)).frame(maxWidth: 350)
             }
             Spacer()
+            Picker("Marker", selection: Binding(
+                get: { room.marker ?? .none },
+                set: { store.updateDetails(room.id, note: room.note ?? "", marker: $0) }
+            )) {
+                ForEach(RoomMarker.allCases) { marker in
+                    Text(marker.title).tag(marker)
+                }
+            }
+            .frame(width: 120)
             if let route = store.route(to: room.id), !route.isEmpty {
                 Button { move(room) } label: {
                     Label("Move here · \(route.count)", systemImage: "figure.walk")
@@ -316,11 +363,16 @@ struct MapperView: View {
                         if current { Image(systemName: "location.fill").foregroundStyle(Palette.jade) }
                         Text(room.name).font(.system(size: 11, weight: .semibold)).lineLimit(1)
                     }
+                    if let marker = room.marker {
+                        Label(marker.title, systemImage: marker.symbol)
+                            .font(.system(size: 8, weight: .medium)).foregroundStyle(markerColor(marker))
+                    }
                     if let area = room.area {
                         Text(area).font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(1)
                     }
-                    Text(room.exits.isEmpty ? "Exits unknown" : "Exits: \(room.exits.sorted().joined(separator: ", "))")
-                        .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).lineLimit(2)
+                    if let note = room.note, !note.isEmpty {
+                        Text(note).font(.system(size: 8)).foregroundStyle(Palette.ink.opacity(0.8)).lineLimit(1)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
@@ -336,5 +388,13 @@ struct MapperView: View {
         .background(current ? Palette.jade.opacity(0.13) : Palette.raised,
                     in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Palette.jade.opacity(0.8) : Palette.border, lineWidth: 1))
+    }
+
+    private func markerColor(_ marker: RoomMarker) -> Color {
+        switch marker {
+        case .danger: Palette.gold
+        case .safe: Palette.jade
+        default: Palette.muted
+        }
     }
 }

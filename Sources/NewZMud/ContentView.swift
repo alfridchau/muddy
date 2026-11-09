@@ -1,10 +1,13 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var library = WorldLibrary()
     @StateObject private var worldSessions = WorldSessions()
     @StateObject private var automation = AutomationStore()
     @StateObject private var mapper = MapperStore()
+    @StateObject private var navigationWindow = NavigationWindowController()
     @AppStorage("selectedWorldID") private var selectionID = World.demo.id.uuidString
     @State private var editingWorld: World?
     @State private var showInspector = true
@@ -23,6 +26,8 @@ struct ContentView: View {
     @State private var pendingOutput = 0
     @State private var terminalColumns = 80
     @State private var terminalRows = 30
+    @State private var bookmarks: [TerminalBookmark] = []
+    @State private var exportError: String?
 
     private var selection: UUID { UUID(uuidString: selectionID) ?? World.demo.id }
     private var world: World { library.worlds.first { $0.id == selection } ?? .demo }
@@ -97,10 +102,16 @@ struct ContentView: View {
         .background(Palette.canvas)
         .preferredColorScheme(.dark)
         .sheet(item: $editingWorld) { item in
-            WorldEditor(world: item) { saved in
+            WorldEditor(world: item, encoding: automation.configuration(for: item.id).terminalEncoding) { saved, encoding, connect in
                 worldSessions.reset(saved.id)
+                automation.setTerminalEncoding(encoding, for: saved.id)
                 library.save(saved)
                 select(saved)
+                if connect {
+                    automation.load(saved.id)
+                    session.configure(automation.configuration)
+                    connectionAction()
+                }
             }
         }
         .sheet(isPresented: $showAutomation) {
@@ -126,23 +137,44 @@ struct ContentView: View {
         }
         .onAppear {
             automation.load(world.id)
+            loadBookmarks(for: world.id)
             mapper.load(worldID: world.id)
             mapper.receive(session.character)
             worldSessions.activate(world.id)
             session.configure(automation.configuration)
             session.resize(columns: terminalColumns, rows: terminalRows)
+            syncNavigationWindow()
         }
-        .onReceive(session.$character) { character in mapper.receive(character) }
-        .onChange(of: selectionID) { _ in mapper.load(worldID: selection) }
-        .onChange(of: automation.configuration) { session.configure($0) }
+        .onReceive(session.$character) { character in
+            mapper.receive(character)
+            syncNavigationWindow()
+        }
+        .onChange(of: selectionID) { _ in
+            mapper.load(worldID: selection)
+            loadBookmarks(for: selection)
+            syncNavigationWindow()
+        }
+        .onChange(of: automation.configuration) { configuration in
+            session.configure(configuration)
+            syncNavigationWindow()
+        }
         .onDisappear { worldSessions.disconnectAll() }
         .onChange(of: session.isConnected) { connected in
             if connected { DispatchQueue.main.async { focusRequest += 1 } }
+            syncNavigationWindow()
         }
         .onChange(of: session.isPasswordInput) { _ in
             command = ""
             showHistory = false
             focusRequest += 1
+            syncNavigationWindow()
+        }
+        .alert("Couldn’t export transcript", isPresented: Binding(
+            get: { exportError != nil }, set: { if !$0 { exportError = nil } }
+        )) {
+            Button("OK") { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
         }
     }
 
@@ -279,6 +311,32 @@ struct ContentView: View {
                     .font(.system(size: 11)).foregroundStyle(Palette.muted)
             }
             .buttonStyle(.plain).help("Open discovered world map")
+            if world.isDemo || (session.isConnected && session.character.hasRoom) {
+                Button { openNavigationWindow() } label: {
+                    Label("Navigation", systemImage: "location.north.line")
+                        .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                }
+                .buttonStyle(.plain).help("Open navigation window")
+            }
+            Menu {
+                Button("Bookmark latest output line", systemImage: "bookmark") { addBookmark() }
+                    .disabled(latestBookmarkLine == nil)
+                if !bookmarks.isEmpty {
+                    Divider()
+                    ForEach(bookmarks) { bookmark in
+                        Button(bookmark.line) {
+                            search = bookmark.line
+                            showSearch = true
+                            followingOutput = true
+                            pendingOutput = 0
+                        }
+                    }
+                    Button("Remove all bookmarks", role: .destructive) { saveBookmarks([]) }
+                }
+            } label: {
+                Image(systemName: "bookmark").foregroundStyle(Palette.muted).frame(width: 22)
+            }
+            .menuStyle(.borderlessButton).fixedSize().help("Bookmark terminal output")
             if world.isDemo {
                 Text("LOCAL PREVIEW · NO SERVER CONNECTION")
                     .font(.system(size: 9, weight: .medium)).tracking(0.8).foregroundStyle(Palette.muted)
@@ -303,6 +361,7 @@ struct ContentView: View {
                 Button("Increase text size") { automation.configuration.terminalFontSize = min(automation.configuration.terminalFontSize + 1, 22) }
                 Button("Decrease text size") { automation.configuration.terminalFontSize = max(automation.configuration.terminalFontSize - 1, 11) }
                 Divider()
+                Button("Export transcript…", systemImage: "square.and.arrow.up") { exportTranscript() }
                 Button("Clear output") {
                     if world.isDemo { demoLines = [] } else { session.clearOutput() }
                 }
@@ -346,19 +405,6 @@ struct ContentView: View {
                         .padding(.horizontal, 13).padding(.vertical, 8)
                         .background(Palette.jade).clipShape(Capsule())
                 }.buttonStyle(.plain).padding(18)
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            if world.isDemo || (session.isConnected && session.character.hasRoom) {
-                NavigationOverlay(worldID: world.id, isDemo: world.isDemo, canSend: canPlay,
-                                  character: session.character,
-                                  exitCommands: automation.configuration.exitCommands,
-                                  send: submit,
-                                  move: { command in
-                    submit(command)
-                })
-                    .id(world.id)
-                    .padding(16)
             }
         }
     }
@@ -502,6 +548,54 @@ struct ContentView: View {
 
     private func addWorld() {
         editingWorld = World(name: "", subtitle: "", host: "", port: "4000")
+    }
+
+    private func syncNavigationWindow() {
+        navigationWindow.update(worldName: world.name, isDemo: world.isDemo, canSend: canPlay,
+                                character: session.character,
+                                exitCommands: automation.configuration.exitCommands,
+                                send: { command in submit(command) })
+    }
+
+    private func openNavigationWindow() {
+        syncNavigationWindow()
+        navigationWindow.show()
+    }
+
+    private var latestBookmarkLine: String? {
+        displayBuffer.plainLines.reversed().first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private func addBookmark() {
+        guard let line = latestBookmarkLine else { return }
+        if bookmarks.contains(where: { $0.line == line }) { return }
+        saveBookmarks([TerminalBookmark(line: line)] + bookmarks.prefix(99))
+    }
+
+    private func loadBookmarks(for id: UUID) {
+        let data = UserDefaults.standard.data(forKey: "terminalBookmarks.\(id.uuidString)")
+        bookmarks = data.flatMap { try? JSONDecoder().decode([TerminalBookmark].self, from: $0) } ?? []
+    }
+
+    private func saveBookmarks(_ values: [TerminalBookmark]) {
+        bookmarks = values
+        guard let data = try? JSONEncoder().encode(values) else { return }
+        UserDefaults.standard.set(data, forKey: "terminalBookmarks.\(world.id.uuidString)")
+    }
+
+    private func exportTranscript() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = "\(world.name)-transcript.txt"
+        let transcript = displayBuffer.plainText
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try Data(transcript.utf8).write(to: url, options: .atomic)
+            } catch {
+                exportError = error.localizedDescription
+            }
+        }
     }
 
     private func select(_ item: World) {

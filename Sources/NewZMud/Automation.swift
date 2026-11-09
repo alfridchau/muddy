@@ -170,6 +170,23 @@ final class AutomationStore: ObservableObject {
         configuration = data.flatMap { try? JSONDecoder().decode(WorldConfiguration.self, from: $0) } ?? WorldConfiguration()
         loading = false
     }
+
+    func configuration(for id: UUID) -> WorldConfiguration {
+        let data = UserDefaults.standard.data(forKey: "worldConfiguration.\(id.uuidString)")
+        return data.flatMap { try? JSONDecoder().decode(WorldConfiguration.self, from: $0) } ?? WorldConfiguration()
+    }
+
+    func setTerminalEncoding(_ encoding: MUDTextEncoding, for id: UUID) {
+        if worldID == id {
+            configuration.terminalEncoding = encoding
+        } else {
+            var saved = configuration(for: id)
+            saved.terminalEncoding = encoding
+            guard let data = try? JSONEncoder().encode(saved) else { return }
+            UserDefaults.standard.set(data, forKey: "worldConfiguration.\(id.uuidString)")
+        }
+    }
+
     private func save() {
         guard !loading, let worldID, let data = try? JSONEncoder().encode(configuration) else { return }
         UserDefaults.standard.set(data, forKey: "worldConfiguration.\(worldID.uuidString)")
