@@ -1,5 +1,66 @@
 import CoreFoundation
+import Network
 import SwiftUI
+
+@MainActor
+final class ConnectionReachabilityProbe: ObservableObject {
+    @Published private(set) var status = "Not checked"
+    @Published private(set) var isRunning = false
+    @Published private(set) var succeeded: Bool?
+    private var connection: NWConnection?
+    private var timeoutTask: Task<Void, Never>?
+
+    func check(host: String, port: String) {
+        cancel()
+        guard !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let value = UInt16(port), value > 0, let endpointPort = NWEndpoint.Port(rawValue: value) else {
+            status = "Enter a valid hostname and port."
+            succeeded = false
+            return
+        }
+        status = "Checking TCP reachability…"
+        succeeded = nil
+        isRunning = true
+        let next = NWConnection(host: NWEndpoint.Host(host), port: endpointPort, using: .tcp)
+        connection = next
+        next.stateUpdateHandler = { [weak self, weak next] state in
+            Task { @MainActor in
+                guard let self, let next, self.connection === next else { return }
+                switch state {
+                case .ready:
+                    self.finish("TCP connection succeeded. The server accepted a connection.", success: true)
+                case .failed(let error):
+                    self.finish("TCP connection failed: \(error.localizedDescription)", success: false)
+                case .waiting(let error):
+                    self.status = "Waiting for network: \(error.localizedDescription)"
+                case .cancelled:
+                    self.finish("Check cancelled.", success: false)
+                default: break
+                }
+            }
+        }
+        next.start(queue: DispatchQueue.global(qos: .utility))
+        timeoutTask = Task { [weak self, weak next] in
+            do { try await Task.sleep(nanoseconds: 6_000_000_000) } catch { return }
+            guard let self, self.connection === next else { return }
+            self.finish("No response within six seconds.", success: false)
+        }
+    }
+
+    func cancel() {
+        guard isRunning else { return }
+        finish("Check cancelled.", success: false)
+    }
+
+    private func finish(_ message: String, success: Bool) {
+        timeoutTask?.cancel(); timeoutTask = nil
+        connection?.stateUpdateHandler = nil
+        connection?.cancel(); connection = nil
+        status = message
+        succeeded = success
+        isRunning = false
+    }
+}
 
 struct GMCPFieldSummary: Identifiable, Equatable {
     var name: String
@@ -43,14 +104,16 @@ struct GMCPDiagnosticsView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var session: MUDSession
     @ObservedObject var automation: AutomationStore
+    var world: World
     @State private var expandedModules: Set<String> = []
     @State private var showStatSetup = false
+    @StateObject private var reachability = ConnectionReachabilityProbe()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("GMCP diagnostics").font(.system(size: 20, weight: .semibold))
+                    Text("Connection diagnostics").font(.system(size: 20, weight: .semibold))
                     Text("Local session metadata only · payload values are excluded")
                         .font(.system(size: 11)).foregroundStyle(Palette.muted)
                 }
@@ -60,6 +123,33 @@ struct GMCPDiagnosticsView: View {
                     .disabled(discoveredStatIDs.isEmpty)
                 Image(systemName: "waveform.path.ecg").font(.title2).foregroundStyle(Palette.jade)
             }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Connection stage").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.muted)
+                        Text(connectionStage).font(.system(size: 11, weight: .medium)).textSelection(.enabled)
+                        Text("Server · \(world.host):\(world.port)").font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.muted)
+                    }
+                    Spacer()
+                    if reachability.isRunning {
+                        Button("Cancel") { reachability.cancel() }
+                    } else {
+                        Button("Check TCP") { reachability.check(host: world.host, port: world.port) }
+                            .buttonStyle(.borderedProminent).tint(Palette.jade)
+                            .disabled(world.isDemo)
+                    }
+                }
+                if reachability.status != "Not checked" {
+                    Text(reachability.status)
+                        .font(.system(size: 10))
+                        .foregroundStyle(reachability.succeeded == true ? Palette.jade : (reachability.succeeded == false ? Palette.gold : Palette.muted))
+                        .textSelection(.enabled)
+                }
+                Text("TCP reachability only. This does not verify credentials or game protocol support.")
+                    .font(.system(size: 9)).foregroundStyle(Palette.muted)
+            }
+            .padding(12).background(Palette.raised).clipShape(RoundedRectangle(cornerRadius: 8))
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
@@ -150,6 +240,19 @@ struct GMCPDiagnosticsView: View {
             return numeric.contains("max\(key)") || numeric.contains("max_\(key)")
         }.map(\.name)
         return Array(Set(actual + paired)).sorted()
+    }
+
+    private var connectionStage: String {
+        if session.reconnectIn != nil { return session.status }
+        if session.isConnecting { return session.status }
+        if !session.isConnected {
+            return session.status == "Not connected" ? "Not connected" : "Connection failed · \(session.status)"
+        }
+        if session.isPasswordInput { return "Login · waiting for password input" }
+        if let loginStatus = session.loginStatus { return "Login · \(loginStatus)" }
+        if session.character.hasRoom { return "In game · room data received" }
+        if session.gmcpAvailable { return "GMCP negotiated · waiting for game data" }
+        return "Telnet connected · GMCP not negotiated"
     }
 
     private func binding(for module: String) -> Binding<Bool> {

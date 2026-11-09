@@ -9,9 +9,12 @@ struct ContentView: View {
     @StateObject private var mapper = MapperStore()
     @StateObject private var navigationWindow = NavigationWindowController()
     @AppStorage("selectedWorldID") private var selectionID = World.demo.id.uuidString
+    @AppStorage("navigationWindowWasOpen") private var navigationWindowWasOpen = false
     @State private var editingWorld: World?
     @State private var showInspector = true
     @State private var command = ""
+    @State private var commandInputFocused = false
+    @State private var terminalFocused = false
     @State private var history: [String] = []
     @State private var showHistory = false
     @State private var search = ""
@@ -119,7 +122,7 @@ struct ContentView: View {
                              currentVitals: session.character.vitals) { automation.configuration = $0 }
         }
         .sheet(isPresented: $showGMCPDiagnostics) {
-            GMCPDiagnosticsView(session: session, automation: automation)
+            GMCPDiagnosticsView(session: session, automation: automation, world: world)
         }
         .sheet(isPresented: $showMapper) {
             MapperView(store: mapper, zoom: $mapZoom, move: moveToMappedRoom)
@@ -136,7 +139,9 @@ struct ContentView: View {
             .hidden()
         }
         .onAppear {
+            navigationWindow.onVisibilityChanged = { navigationWindowWasOpen = $0 }
             automation.load(world.id)
+            library.markRecent(world.id)
             loadBookmarks(for: world.id)
             mapper.load(worldID: world.id)
             mapper.receive(session.character)
@@ -144,6 +149,9 @@ struct ContentView: View {
             session.configure(automation.configuration)
             session.resize(columns: terminalColumns, rows: terminalRows)
             syncNavigationWindow()
+            if navigationWindowWasOpen {
+                DispatchQueue.main.async { openNavigationWindow() }
+            }
         }
         .onReceive(session.$character) { character in
             mapper.receive(character)
@@ -161,6 +169,7 @@ struct ContentView: View {
         .onDisappear { worldSessions.disconnectAll() }
         .onChange(of: session.isConnected) { connected in
             if connected { DispatchQueue.main.async { focusRequest += 1 } }
+            else { commandInputFocused = false; terminalFocused = false }
             syncNavigationWindow()
         }
         .onChange(of: session.isPasswordInput) { _ in
@@ -200,48 +209,27 @@ struct ContentView: View {
             }
             .padding(.horizontal, 20).padding(.bottom, 8)
 
-            ForEach(library.worlds) { item in
-                Button { select(item) } label: {
-                    HStack(alignment: .top, spacing: 11) {
-                        Image(systemName: item.isDemo ? "mountain.2" : "globe.asia.australia")
-                            .font(.system(size: 16, weight: .light))
-                            .foregroundStyle(selection == item.id ? Palette.jade : Palette.muted)
-                            .frame(width: 22).padding(.top, 3)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(item.name).font(.system(size: 14, weight: .medium))
-                            Text(item.subtitle.isEmpty ? item.host : item.subtitle)
-                                .font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                        if selection == item.id {
-                            Circle().fill(Palette.jade).frame(width: 5, height: 5).padding(.top, 7)
-                        }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 5) {
+                    if !favoriteWorlds.isEmpty {
+                        SectionLabel(title: "Favorites").padding(.horizontal, 18).padding(.top, 8)
+                        ForEach(favoriteWorlds) { worldRow($0) }
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 13)
-                    .background(selection == item.id ? Palette.jade.opacity(0.08) : .clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 10).padding(.bottom, 4)
-                .contextMenu {
-                    if !item.isDemo {
-                        Button("Edit world") { editingWorld = item }
-                            .disabled(item.id == selection && session.canCancelConnection)
-                        Button("Remove world", role: .destructive) {
-                            if selection == item.id { select(.demo) }
-                            worldSessions.remove(item.id)
-                            library.worlds.removeAll { $0.id == item.id }
-                        }
+                    if !recentWorlds.isEmpty {
+                        SectionLabel(title: "Recent").padding(.horizontal, 18).padding(.top, 10)
+                        ForEach(recentWorlds) { worldRow($0) }
                     }
+                    SectionLabel(title: "All worlds").padding(.horizontal, 18).padding(.top, 10)
+                    ForEach(library.worlds) { worldRow($0) }
+                    Button(action: addWorld) {
+                        Label("Add a world", systemImage: "plus")
+                            .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                    }
+                    .buttonStyle(.plain).padding(.horizontal, 10).padding(.top, 3)
                 }
+                .padding(.bottom, 8)
             }
-            Button(action: addWorld) {
-                Label("Add a world", systemImage: "plus")
-                    .font(.system(size: 12)).foregroundStyle(Palette.muted)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
-            }
-            .buttonStyle(.plain).padding(.horizontal, 10).padding(.top, 6)
             Spacer()
             VStack(alignment: .leading, spacing: 10) {
                 Image(systemName: "text.quote").font(.system(size: 17)).foregroundStyle(Palette.gold.opacity(0.6))
@@ -261,6 +249,71 @@ struct ContentView: View {
             }.padding(20)
         }
         .background(Palette.panel)
+    }
+
+    private var favoriteWorlds: [World] {
+        library.worlds.filter { library.isFavorite($0.id) }
+    }
+
+    private var recentWorlds: [World] {
+        library.recentIDs.compactMap { id in library.worlds.first { $0.id == id } }
+            .filter { !library.isFavorite($0.id) }
+    }
+
+    private func worldRow(_ item: World) -> some View {
+        HStack(spacing: 2) {
+            Button {
+                select(item)
+                library.markRecent(item.id)
+            } label: {
+                HStack(alignment: .top, spacing: 11) {
+                    Image(systemName: item.isDemo ? "mountain.2" : "globe.asia.australia")
+                        .font(.system(size: 16, weight: .light))
+                        .foregroundStyle(selection == item.id ? Palette.jade : Palette.muted)
+                        .frame(width: 22).padding(.top, 3)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(item.name).font(.system(size: 14, weight: .medium))
+                        Text(item.subtitle.isEmpty ? item.host : item.subtitle)
+                            .font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    if selection == item.id {
+                        Circle().fill(Palette.jade).frame(width: 5, height: 5).padding(.top, 7)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if !item.isDemo {
+                Button { library.toggleFavorite(item.id) } label: {
+                    Image(systemName: library.isFavorite(item.id) ? "star.fill" : "star")
+                        .font(.system(size: 11)).foregroundStyle(library.isFavorite(item.id) ? Palette.gold : Palette.muted)
+                        .frame(width: 26, height: 36)
+                }
+                .buttonStyle(.plain)
+                .help(library.isFavorite(item.id) ? "Remove from favorites" : "Add to favorites")
+            }
+        }
+        .padding(.horizontal, 10)
+        .background(selection == item.id ? Palette.jade.opacity(0.08) : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.bottom, 3)
+        .contextMenu {
+            if !item.isDemo {
+                Button(library.isFavorite(item.id) ? "Remove from Favorites" : "Add to Favorites") {
+                    library.toggleFavorite(item.id)
+                }
+                Button("Edit world") { editingWorld = item }
+                    .disabled(item.id == selection && session.canCancelConnection)
+                Button("Remove world", role: .destructive) {
+                    if selection == item.id { select(.demo) }
+                    worldSessions.remove(item.id)
+                    library.remove(item.id)
+                }
+            }
+        }
     }
 
     private var workspaceHeader: some View {
@@ -393,6 +446,9 @@ struct ContentView: View {
             if !world.isDemo { session.resize(columns: columns, rows: rows) }
         } onNavigate: { direction in
             navigate(direction)
+        } onFocusChange: { focused in
+            terminalFocused = focused
+            if focused { commandInputFocused = false }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottomTrailing) {
@@ -407,6 +463,18 @@ struct ContentView: View {
                 }.buttonStyle(.plain).padding(18)
             }
         }
+        .overlay(alignment: .topLeading) {
+            if terminalFocused {
+                Label("Terminal focused · WASD / QEZC to move", systemImage: "keyboard")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Palette.ink)
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(Palette.panel.opacity(0.94), in: Capsule())
+                    .overlay(Capsule().stroke(Palette.jade.opacity(0.35), lineWidth: 1))
+                    .padding(12)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private var commandBar: some View {
@@ -416,7 +484,11 @@ struct ContentView: View {
                 CommandInput(text: $command, history: history, completions: completionWords,
                              secret: session.isPasswordInput && !world.isDemo,
                              enabled: canSend,
-                             focusRequest: focusRequest, onSubmit: submit)
+                             focusRequest: focusRequest, onSubmit: submit,
+                             onFocusChange: { focused in
+                    commandInputFocused = focused
+                    if focused { terminalFocused = false }
+                })
                     .frame(height: 22)
                 Button { submit(command) } label: {
                     Image(systemName: "return").font(.system(size: 13))
@@ -428,9 +500,13 @@ struct ContentView: View {
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(Palette.raised)
             .clipShape(RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.jade.opacity(canSend ? 0.28 : 0.12)))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(
+                commandInputFocused ? Palette.jade : Palette.jade.opacity(canSend ? 0.28 : 0.12),
+                lineWidth: commandInputFocused ? 1.5 : 1
+            ))
             HStack(spacing: 14) {
-                Text("↑↓ history · Tab complete · ⌘K focus").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                Text(focusHint).font(.system(size: 10)).foregroundStyle(commandInputFocused || terminalFocused ? Palette.ink : Palette.muted)
+                    .lineLimit(1).truncationMode(.tail)
                 Rectangle().fill(Palette.border).frame(width: 1, height: 10)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
@@ -496,7 +572,11 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack(spacing: 7) {
-            Circle().fill(statusIndicatorColor).frame(width: 5, height: 5)
+            if session.isConnecting || session.reconnectIn != nil {
+                ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 10, height: 10)
+            } else {
+                Circle().fill(statusIndicatorColor).frame(width: 6, height: 6)
+            }
             Text(connectionStatusText)
             Spacer()
             if session.queuedCommands > 0 { Text("\(session.queuedCommands) queued"); Text("·") }
@@ -526,9 +606,22 @@ struct ContentView: View {
         return "Telnet connected · configure login prompts for sign-in status"
     }
 
+    private var focusHint: String {
+        if commandInputFocused {
+            return session.isPasswordInput && !world.isDemo
+                ? "Secure password input · press Return to submit"
+                : "Game input focused · ↑↓ history · Tab complete"
+        }
+        if terminalFocused { return "Terminal focused · WASD / QEZC move · click input to type" }
+        return "Click input to type · ⌘K focuses game input"
+    }
+
     private var statusIndicatorColor: Color {
         if world.isDemo { return Palette.gold }
-        guard session.isConnected else { return Palette.muted }
+        if session.isConnecting || session.reconnectIn != nil { return Palette.gold }
+        guard session.isConnected else {
+            return session.status == "Not connected" ? Palette.muted : Color(red: 0.90, green: 0.43, blue: 0.39)
+        }
         return session.character.hasCharacterInfo ? Palette.jade : Palette.gold
     }
 
@@ -552,6 +645,7 @@ struct ContentView: View {
 
     private func syncNavigationWindow() {
         navigationWindow.update(worldName: world.name, isDemo: world.isDemo, canSend: canPlay,
+                                connectionStatus: connectionStatusText,
                                 character: session.character,
                                 exitCommands: automation.configuration.exitCommands,
                                 send: { command in submit(command) })
@@ -599,6 +693,7 @@ struct ContentView: View {
     }
 
     private func select(_ item: World) {
+        library.markRecent(item.id)
         guard selection != item.id else { return }
         selectionID = item.id.uuidString
         worldSessions.activate(item.id)

@@ -9,6 +9,7 @@ struct CommandInput: NSViewRepresentable {
     var enabled: Bool
     var focusRequest: Int
     var onSubmit: (String) -> Void
+    var onFocusChange: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> InputHost {
@@ -53,6 +54,14 @@ struct CommandInput: NSViewRepresentable {
             guard let field = notification.object as? NSTextField else { return }
             parent.text = field.stringValue
             recall.reset(); completion.reset()
+        }
+
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            parent.onFocusChange(true)
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            parent.onFocusChange(false)
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {

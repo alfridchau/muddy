@@ -28,11 +28,18 @@ struct World: Identifiable, Codable, Equatable {
 @MainActor
 final class WorldLibrary: ObservableObject {
     @Published var worlds: [World] { didSet { persist() } }
+    @Published private(set) var favoriteIDs: Set<UUID>
+    @Published private(set) var recentIDs: [UUID]
 
     init() {
         let data = UserDefaults.standard.data(forKey: "savedWorlds")
         let saved = data.flatMap { try? JSONDecoder().decode([World].self, from: $0) } ?? []
         worlds = [.demo] + saved.filter { !$0.isDemo }
+        favoriteIDs = Set((UserDefaults.standard.data(forKey: "favoriteWorldIDs")
+            .flatMap { try? JSONDecoder().decode([UUID].self, from: $0) }) ?? [])
+        recentIDs = (UserDefaults.standard.data(forKey: "recentWorldIDs")
+            .flatMap { try? JSONDecoder().decode([UUID].self, from: $0) }) ?? []
+        recentIDs = recentIDs.filter { id in worlds.contains(where: { $0.id == id && !$0.isDemo }) }
     }
 
     func save(_ world: World) {
@@ -43,9 +50,41 @@ final class WorldLibrary: ObservableObject {
         }
     }
 
+    func isFavorite(_ id: UUID) -> Bool { favoriteIDs.contains(id) }
+
+    func toggleFavorite(_ id: UUID) {
+        guard worlds.contains(where: { $0.id == id && !$0.isDemo }) else { return }
+        if !favoriteIDs.insert(id).inserted { favoriteIDs.remove(id) }
+        persistProfileLists()
+    }
+
+    func markRecent(_ id: UUID) {
+        guard worlds.contains(where: { $0.id == id && !$0.isDemo }) else { return }
+        recentIDs.removeAll { $0 == id }
+        recentIDs.insert(id, at: 0)
+        recentIDs = Array(recentIDs.prefix(5))
+        persistProfileLists()
+    }
+
+    func remove(_ id: UUID) {
+        worlds.removeAll { $0.id == id }
+        favoriteIDs.remove(id)
+        recentIDs.removeAll { $0 == id }
+        persistProfileLists()
+    }
+
     private func persist() {
         if let data = try? JSONEncoder().encode(worlds.filter { !$0.isDemo }) {
             UserDefaults.standard.set(data, forKey: "savedWorlds")
+        }
+    }
+
+    private func persistProfileLists() {
+        if let data = try? JSONEncoder().encode(Array(favoriteIDs)) {
+            UserDefaults.standard.set(data, forKey: "favoriteWorldIDs")
+        }
+        if let data = try? JSONEncoder().encode(recentIDs) {
+            UserDefaults.standard.set(data, forKey: "recentWorldIDs")
         }
     }
 }

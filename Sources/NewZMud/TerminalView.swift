@@ -10,6 +10,7 @@ struct TerminalView: NSViewRepresentable {
     @Binding var newOutput: Int
     var onResize: (Int, Int) -> Void
     var onNavigate: (String) -> Bool
+    var onFocusChange: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -20,6 +21,9 @@ struct TerminalView: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
         let canvas = TerminalCanvas()
+        canvas.onFocusChange = { [weak coordinator = context.coordinator] focused in
+            coordinator?.parent.onFocusChange(focused)
+        }
         canvas.onNavigate = { [weak coordinator = context.coordinator] command in
             coordinator?.parent.onNavigate(command) ?? false
         }
@@ -50,6 +54,7 @@ struct TerminalView: NSViewRepresentable {
         coordinator.parent = self
         coordinator.lastFollowing = following
         if contentChanged { canvas?.buffer = buffer }
+        canvas?.onFocusChange = { [weak coordinator] focused in coordinator?.parent.onFocusChange(focused) }
         canvas?.onNavigate = { [weak coordinator] command in coordinator?.parent.onNavigate(command) ?? false }
         if fontChanged { canvas?.fontSize = fontSize }
         if themeChanged { canvas?.theme = theme }
@@ -148,9 +153,22 @@ final class TerminalCanvas: NSView {
     private var selectionEnd: (row: Int, column: Int)?
     private let padding: CGFloat = 20
     var onNavigate: ((String) -> Bool)?
+    var onFocusChange: ((Bool) -> Void)?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { onFocusChange?(true) }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { onFocusChange?(false) }
+        return accepted
+    }
     var font: NSFont { NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
     var cellWidth: CGFloat { ("M" as NSString).size(withAttributes: [.font: font]).width }
     var lineHeight: CGFloat { ceil(fontSize * 1.65) }
